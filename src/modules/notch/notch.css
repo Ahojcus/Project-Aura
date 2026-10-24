@@ -1,0 +1,766 @@
+/* ---------------------------------------------------------------------------
+   Smart Notch — visual layer
+   Design language: layered glass, soft accent glow, donut gauges, gentle
+   motion. All animation is transform/opacity only (flat idle cost).
+--------------------------------------------------------------------------- */
+
+.notch-root {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  justify-content: flex-start;
+
+  /* local tokens (derive from the global theme; --n* are set inline from Settings) */
+  --nsection: color-mix(in srgb, var(--panel-solid) 62%, transparent);
+  --nsection-hover: color-mix(in srgb, var(--panel-solid) 88%, transparent);
+  --ntrack: var(--border-strong);
+  /* Ambient light color: --nambient (set inline from Settings) recolors the
+     glow ring/aura; without it they follow the accent. */
+  --nambient-lite: var(--nambient, var(--accent));
+  --naccent-soft: color-mix(in srgb, var(--nambient-lite) calc(var(--nglow, 0.28) * 100%), transparent);
+}
+
+/* ---------------------------------------------------------------- pill body */
+
+.notch-pill {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  color: var(--text);
+  border-radius: var(--nradius, 26px);
+  border: 1px solid var(--border-strong);
+  background:
+    linear-gradient(160deg,
+      color-mix(in srgb, var(--panel-solid) calc(var(--nglass, 0.86) * 100%), transparent),
+      color-mix(in srgb, var(--panel) calc(var(--nglass, 0.86) * 100%), transparent));
+  backdrop-filter: blur(var(--nblur, 30px)) saturate(165%);
+  -webkit-backdrop-filter: blur(var(--nblur, 30px)) saturate(165%);
+
+  cursor: pointer;
+  user-select: none;
+  transition: border-radius calc(0.3s * var(--nspeed, 1)) ease;
+
+  /* ambient shadow stack: drop shadow + faint accent halo + inner sheen */
+  box-shadow:
+    0 18px 42px color-mix(in srgb, #000 34%, transparent),
+    0 0 26px -10px var(--naccent-soft),
+    inset 0 1px 0 color-mix(in srgb, #fff 9%, transparent);
+
+  /* accent aura in the top-left corner — intensity from the glow setting */
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(120% 90% at 12% -10%, var(--naccent-soft), transparent 55%);
+    opacity: 0.35;
+    transition: opacity calc(0.3s * var(--nspeed, 1)) ease;
+  }
+  &:hover::before { opacity: 0.6; }
+
+  /* accent glow ring while open */
+  &.open {
+    border-radius: var(--nradius, 26px);
+    box-shadow:
+      0 24px 60px color-mix(in srgb, #000 42%, transparent),
+      0 0 34px -6px var(--naccent-soft),
+      inset 0 1px 0 color-mix(in srgb, #fff 9%, transparent);
+  }
+
+  /* ambience disabled from Settings → Smart Notch → Album-art ambience */
+  &.no-ambient .notch-ambient { display: none; }
+  &.no-ambient .notch-media::after { display: none; }
+
+  /* stagger disabled from Settings → Smart Notch → Staggered reveal */
+  &.no-stagger .notch-section { animation: none; }
+}
+
+/* ------------------------------------------------------- collapsed (44px) */
+
+.notch-collapsed {
+  position: relative;
+  z-index: 2;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 15px;
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+/* bar mode: fixed modest rounding regardless of the notch radius setting */
+.notch-root.bar .notch-pill {
+  border-radius: max(12px, calc(var(--nradius, 26px) * 0.6));
+}
+.notch-root.bar .notch-collapsed { padding: 0 18px; }
+
+/* bottom placements: the pill sits at the BOTTOM of the (taller) window and
+   the content grows upward from it. */
+.notch-root.bottom .notch-pill {
+  display: flex;
+  flex-direction: column-reverse;
+}
+.notch-root.bottom .notch-expanded {
+  transform: translateY(8px) scale(0.98);
+  transform-origin: bottom center;
+}
+.notch-root.bottom .notch-pill.open .notch-expanded {
+  transform: translateY(0) scale(1);
+}
+
+.notch-mini-timer {
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.notch-dot {
+  width: 9px;
+  height: 9px;
+  min-width: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 10px var(--accent);
+  animation: notchn-pulse 3s ease-in-out infinite;
+}
+
+@keyframes notchn-pulse {
+  0%, 100% { box-shadow: 0 0 4px var(--accent); }
+  50%      { box-shadow: 0 0 12px var(--accent); }
+}
+
+.notch-name {
+  font-family: var(--tx-family, inherit);
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.5px;
+  background: linear-gradient(120deg, var(--text), color-mix(in srgb, var(--text) 62%, var(--accent)));
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.notch-mini-mon {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* a thin real song-progress line in the collapsed pill — fills in sync with
+   the track (transition duration matches the 1s media poll cadence) */
+.notch-mini-progress {
+  margin-left: auto;
+  width: 52px;
+  height: 3px;
+  min-width: 52px;
+  border-radius: 2px;
+  background: var(--border-strong);
+  overflow: hidden;
+}
+.notch-mini-progress span {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--nambient-lite, var(--accent));
+  transition: width 1.05s linear;
+}
+.notch-mini-progress.paused span { opacity: 0.45; }
+
+/* animated equalizer bars — the "something is playing" indicator */
+.notch-eq {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2.5px;
+  height: 13px;
+}
+.notch-eq i {
+  width: 3px;
+  height: 5px;
+  border-radius: 2px;
+  background: var(--accent);
+  animation: notchn-eq 0.9s ease-in-out infinite;
+}
+.notch-eq i:nth-child(2) { animation-delay: 0.18s; animation-duration: 0.75s; }
+.notch-eq i:nth-child(3) { animation-delay: 0.36s; animation-duration: 1.05s; }
+.notch-eq.paused i { animation-play-state: paused; height: 5px; opacity: 0.65; }
+
+@keyframes notchn-eq {
+  0%, 100% { height: 4px; }
+  50%      { height: 13px; }
+}
+
+/* ------------------------------------------------------- expanded content */
+
+.notch-expanded {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 2px 14px 18px;
+  min-width: 0;
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+  transform-origin: top center;
+  /* Symmetric transition — both reveal (open) and fade-out (close) animate;
+     duration scales with the animation-speed setting. */
+  transition: opacity calc(0.2s * var(--nspeed, 1)) ease,
+              transform calc(0.28s * var(--nspeed, 1)) cubic-bezier(0.22, 1, 0.36, 1);
+  pointer-events: none;
+  /* Never let widgets render outside the visible window area. */
+  max-height: calc(100% - 44px);
+  overflow: hidden;
+}
+.notch-pill.open .notch-expanded {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  pointer-events: auto;
+  transition-delay: calc(0.12s * var(--nspeed, 1));
+}
+
+/* staggered rise of each section on reveal (duration follows speed setting) */
+.notch-pill.open .notch-section {
+  animation: notchn-rise calc(0.42s * var(--nspeed, 1)) cubic-bezier(0.22, 1, 0.36, 1)
+    calc(var(--nspeed, 1) * 0.055s) backwards;
+}
+.notch-pill.open .notch-section:nth-child(2) { animation-delay: calc(var(--nspeed, 1) * 0.11s); }
+.notch-pill.open .notch-section:nth-child(3) { animation-delay: calc(var(--nspeed, 1) * 0.165s); }
+
+@keyframes notchn-rise {
+  from { opacity: 0; transform: translateY(10px) scale(0.985); }
+}
+
+.notch-section {
+  position: relative;
+  background: var(--nsection);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 10px 12px;
+  overflow: hidden;
+}
+
+/* ------------------------------------------------------------------- media */
+
+.notch-media { padding: 10px; }
+
+/* blurred album art ambience behind the whole media card */
+.notch-ambient {
+  position: absolute;
+  inset: -20px;
+  width: calc(100% + 40px);
+  height: calc(100% + 40px);
+  object-fit: cover;
+  filter: blur(26px) saturate(150%);
+  opacity: 0.22;
+  pointer-events: none;
+  transform: translateZ(0);
+}
+/* custom ambient light color (Settings → Smart Notch → Ambient light color):
+   a soft colored glow replaces the blurred album-art ambience */
+.notch-ambient.tinted {
+  background:
+    radial-gradient(120% 100% at 18% -12%, var(--nambient-lite) 0%, transparent 62%),
+    radial-gradient(90% 90% at 100% 100%, color-mix(in srgb, var(--nambient-lite) 55%, transparent) 0%, transparent 60%);
+  filter: none;
+  opacity: 0.32;
+}
+/* readability veil over the ambience — removed when ambience is off */
+.notch-media::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--panel-solid) 30%, transparent),
+    color-mix(in srgb, var(--panel-solid) 62%, transparent));
+}
+.notch-media.plain::after { display: none; }
+.notch-media .notch-row,
+.notch-media .notch-progress,
+.notch-media .notch-times {
+  position: relative;
+  z-index: 1;
+}
+
+.notch-row {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  min-height: 46px;
+}
+
+.notch-art {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 14px color-mix(in srgb, #000 30%, transparent);
+  border: 1px solid var(--border-strong);
+  flex-shrink: 0;
+}
+.notch-art img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.notch-art-fallback {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+  color: var(--muted);
+  background:
+    radial-gradient(90% 90% at 50% 20%, var(--naccent-soft), transparent 70%);
+}
+
+.notch-track {
+  flex: 1;
+  min-width: 0;
+}
+.notch-title {
+  font-size: calc(13.5px * var(--tx-size, 1));
+  font-weight: var(--tx-weight, 650);
+  color: var(--tx-color, inherit);
+  font-family: var(--tx-family, inherit);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.notch-artist {
+  margin-top: 2px;
+  font-size: calc(11px * var(--tx-size, 1));
+  color: var(--tx-color, var(--muted));
+  font-family: var(--tx-family, inherit);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* circular gradient play button */
+.notch-playbtn {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  color: #fff;
+  font-size: 13px;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(135deg, var(--accent),
+      color-mix(in srgb, var(--accent) 52%, #c86bff));
+  box-shadow:
+    0 4px 14px var(--naccent-soft),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  transition: transform 0.15s ease, box-shadow 0.15s ease, filter 0.15s ease;
+}
+.notch-playbtn:hover {
+  transform: scale(1.07);
+  filter: brightness(1.08);
+}
+.notch-playbtn:active {
+  transform: scale(0.94);
+}
+
+/* progress line with glow + time labels */
+.notch-progress {
+  margin-top: 8px;
+  height: 4px;
+  border-radius: 3px;
+  background: var(--border-strong);
+  overflow: hidden;
+}
+.notch-progress > div {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--nambient-lite, var(--accent)),
+    color-mix(in srgb, var(--nambient-lite, var(--accent)) 55%, #fff 45%));
+  box-shadow: 0 0 8px var(--nambient-lite, var(--accent));
+  /* width transition spans the 1s poll cadence so the fill moves continuously */
+  transition: width 1.05s linear;
+}
+
+.notch-times {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------- monitors */
+
+.notch-monitors {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px 6px;
+  padding-top: 11px;
+  padding-bottom: 9px;
+}
+
+.notch-stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+/* donut gauge: conic fill masked to a ring, value centered inside */
+.notch-ringwrap {
+  position: relative;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+}
+.notch-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  -webkit-mask: radial-gradient(farthest-side,
+      transparent calc(100% - 4px), #000 calc(100% - 3.4px));
+  mask: radial-gradient(farthest-side,
+      transparent calc(100% - 4px), #000 calc(100% - 3.4px));
+  transition: background 0.6s linear;
+}
+.notch-ring-text {
+  font-size: 10px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.2px;
+}
+
+/* flat chip style for the network numbers */
+.notch-net {
+  height: 42px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: var(--nsection);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+}
+.notch-monitors .notch-stat .notch-net {
+  background: transparent;
+  border-color: transparent;
+  padding: 0;
+}
+
+.stat-label {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------------- focus timer */
+
+.notch-timer {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.nft-ring { width: 46px; height: 46px; }
+.nft-clock { font-size: 11.5px; }
+.nft-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+}
+.nft-presets,
+.nft-ctl {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.nft-chip {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--nsection);
+  color: var(--text);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.nft-chip:hover {
+  border-color: var(--naccent-soft);
+  background: var(--nsection-hover);
+}
+.nft-chip:disabled { opacity: 0.45; cursor: default; }
+
+/* ---------------------------------------------------------- clipboard history */
+
+.notch-clip {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 150px;
+  overflow-y: auto;
+}
+.ncb-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--nsection-hover);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.ncb-item:hover {
+  border-color: var(--naccent-soft);
+  background: color-mix(in srgb, var(--accent) 10%, var(--nsection-hover));
+}
+.ncb-text {
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ncb-time {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--muted);
+}
+
+/* --------------------------------------------------------- bluetooth battery */
+
+.notch-bt {
+  display: flex;
+  flex-direction: column;
+}
+.nbt-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 2px;
+  border-bottom: 1px solid var(--border);
+}
+.nbt-row:last-child { border-bottom: none; }
+.nbt-name {
+  font-size: 12px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nbt-batt {
+  flex-shrink: 0;
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--ok);
+}
+.nbt-batt.low { color: var(--danger); }
+.nbt-batt.unknown { color: var(--muted); font-weight: 500; }
+
+/* --------------------------------------------------------------- shortcuts */
+
+.notch-shortcuts {
+  display: flex;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.notch-btn {
+  background: var(--nsection);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  color: var(--text);
+  width: 36px;
+  height: 36px;
+  font-size: 14px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.12s ease;
+  flex-shrink: 0;
+}
+.notch-btn:hover {
+  background: var(--nsection-hover);
+  border-color: var(--naccent-soft);
+  transform: translateY(-1px);
+}
+.notch-btn:active { transform: scale(0.95); }
+
+.notch-btn.wide {
+  width: auto;
+  height: 32px;
+  padding: 0 13px 0 9px;
+  font-size: 12px;
+  font-weight: 550;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border-radius: 999px;
+}
+.notch-btn.wide .sc-ico {
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: 11px;
+  background: var(--nsection-hover);
+  border: 1px solid var(--border);
+  transition: box-shadow 0.15s ease;
+}
+.notch-btn.wide:hover .sc-ico {
+  box-shadow: 0 0 8px var(--naccent-soft);
+}
+
+/* --------------------------------------------------------------- fallbacks */
+
+.notch-small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.notch-empty {
+  font-size: 12px;
+  color: var(--muted);
+  text-align: center;
+  padding: 10px 0 4px;
+}
+
+/* --------------------------------------------------------------------- run */
+
+.notch-run .notch-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 7px;
+}
+.nrun-rescan {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+.nrun-rescan:hover {
+  color: var(--text);
+  background: var(--nsection-hover);
+}
+.nrun-input {
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--nsection-hover, rgba(255, 255, 255, 0.05));
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  padding: 8px 11px;
+  outline: none;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.nrun-input::placeholder { color: var(--muted); opacity: 0.85; }
+.nrun-input:focus {
+  border-color: var(--naccent-soft);
+  background: var(--nsection-hover, rgba(255, 255, 255, 0.07));
+}
+.nrun-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-top: 6px;
+}
+.nrun-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  text-align: left;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+.nrun-row.sel,
+.nrun-row:hover {
+  background: var(--nsection-hover);
+}
+.nrun-ico {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: var(--nsection);
+  border: 1px solid var(--border);
+  display: grid;
+  place-items: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--naccent);
+  flex-shrink: 0;
+}
+.nrun-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nrun-type {
+  margin-left: auto;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.75;
+}
+
+/* --------------------------------------------------------------- utilities */
+
+.stat-value {
+  font-size: 12.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

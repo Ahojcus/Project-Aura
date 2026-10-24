@@ -1,0 +1,153 @@
+.widget {
+  position: fixed;
+  inset: 6px;
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px;
+  cursor: default;
+  user-select: none;
+}
+
+.widget.drag-region {
+  cursor: move;
+}
+
+.clock-digital {
+  font-size: calc(56px * var(--tx-size, 1));
+  font-weight: var(--tx-weight, 250);
+  color: var(--tx-color, inherit);
+  font-family: var(--tx-family, inherit);
+  letter-spacing: 1px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.clock-digital .ampm {
+  font-size: calc(18px * var(--tx-size, 1));
+  font-weight: 500;
+  margin-left: 6px;
+  color: var(--accent);
+}
+.clock-minimal {
+  font-size: calc(26px * var(--tx-size, 1));
+  font-weight: var(--tx-weight, 300);
+  color: var(--tx-color, inherit);
+  font-family: var(--tx-family, inherit);
+  font-variant-numeric: tabular-nums;
+}
+.clock-date {
+  margin-top: 6px;
+  font-size: calc(14px * var(--tx-size, 1));
+  color: var(--tx-color, var(--muted));
+  font-family: var(--tx-family, inherit);
+  font-weight: var(--tx-weight, normal);
+}
+.clock-analog {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+}
+
+.todo-list {
+  flex: 1;
+  overflow-y: auto;
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.todo-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-hover);
+  border: 1px solid transparent;
+  transition: border-color 0.15s ease;
+}
+.todo-row:hover { border-color: var(--border); }
+.todo-row.done { opacity: 0.45; }
+.todo-row.done .todo-text { text-decoration: line-through; }
+.todo-check {
+  width: 17px;
+  height: 17px;
+  min-width: 17px;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.todo-check.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.todo-text {
+  flex: 1;
+  font-size: calc(13px * var(--tx-size, 1));
+  font-weight: var(--tx-weight, normal);
+  color: var(--tx-color, inherit);
+  font-family: var(--tx-family, inherit);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.todo-meta {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+.pill {
+  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--muted);
+}
+.pill.high { color: var(--danger); border-color: var(--danger); }
+.pill.medium { color: var(--warn); border-color: var(--warn); }
+.pill.low { color: var(--ok); border-color: var(--ok); }
+.pill.due.overdue { color: var(--danger); border-color: var(--danger); }
+.pill.due { color: var(--muted); }
+.todo-del {
+  visibility: hidden;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 14px;
+  padding: 0 2px;
+}
+.todo-row:hover .todo-del { visibility: visible; }
+.todo-add {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.todo-add input { flex: 1; min-width: 0; font-size: 12px; padding: 6px 8px; }
+.todo-add .mini {
+  font-size: 11px;
+  padding: 6px 9px;
+}
+.todo-filters {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chip {
+  font-size: 11px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+.chip.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: transparent;
+}

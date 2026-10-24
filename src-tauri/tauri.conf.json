@@ -1,0 +1,95 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Aura",
+  "version": "0.1.0-alpha",
+  "identifier": "com.freebuff.aura",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "withGlobalTauri": false,
+    "security": {
+      "csp": null,
+      "assetProtocol": { "enable": true, "scope": ["**"] }
+    },
+    "windows": [
+      {
+        "label": "settings",
+        "title": "Aura Settings",
+        "url": "index.html",
+        "width": 1000,
+        "height": 680,
+        "minWidth": 820,
+        "minHeight": 560,
+        "center": true,
+        "resizable": true,
+        "visible": true
+      },
+      {
+        "label": "wallpaper",
+        "url": "wallpaper.html",
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "alwaysOnTop": false,
+        "width": 1920,
+        "height": 1080
+      },
+      {
+        "label": "notch",
+        "url": "notch.html",
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "alwaysOnTop": true,
+        "width": 240,
+        "height": 44
+      },
+      {
+        "label": "clock",
+        "url": "clock.html",
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "alwaysOnTop": true,
+        "width": 340,
+        "height": 210
+      },
+      {
+        "label": "todo",
+        "url": "todo.html",
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "alwaysOnTop": true,
+        "width": 380,
+        "height": 520
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "Utility",
+    "shortDescription": "Lightweight modular desktop overlay: wallpaper engine, clock, to-do and a smart notch.",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
+  }
+}
