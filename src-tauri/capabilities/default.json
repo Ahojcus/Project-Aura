@@ -1,7 +1,7 @@
 {
   "identifier": "default",
   "description": "Permissions for all Aura windows.",
-  "windows": ["settings", "notch", "wallpaper", "clock", "todo"],
+  "windows": ["settings", "notch", "wallpaper", "clock", "todo", "start"],
   "permissions": [
     "core:default",
     "core:window:allow-show",

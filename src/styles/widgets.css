@@ -6,6 +6,10 @@
   padding: 16px 18px;
   cursor: default;
   user-select: none;
+  /* Legibility over bright wallpapers: a soft ambient drop shadow */
+  box-shadow:
+    0 18px 48px color-mix(in srgb, #000 26%, transparent),
+    0 2px 8px color-mix(in srgb, #000 12%, transparent);
 }
 
 .widget.drag-region {
@@ -20,6 +24,8 @@
   letter-spacing: 1px;
   line-height: 1;
   font-variant-numeric: tabular-nums;
+  /* a faint accent aura so the clock floats off bright backgrounds */
+  text-shadow: 0 0 26px color-mix(in srgb, var(--accent) 22%, transparent);
 }
 .clock-digital .ampm {
   font-size: calc(18px * var(--tx-size, 1));
@@ -35,11 +41,20 @@
   font-variant-numeric: tabular-nums;
 }
 .clock-date {
-  margin-top: 6px;
-  font-size: calc(14px * var(--tx-size, 1));
+  margin-top: 8px;
+  align-self: flex-start;
+  font-size: calc(13px * var(--tx-size, 1));
   color: var(--tx-color, var(--muted));
   font-family: var(--tx-family, inherit);
   font-weight: var(--tx-weight, normal);
+  padding: 2px 10px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--panel-hover) 60%, transparent);
+  border: 1px solid var(--border);
+  letter-spacing: 0.3px;
+}
+.clock-analog svg {
+  filter: drop-shadow(0 10px 22px color-mix(in srgb, #000 22%, transparent));
 }
 .clock-analog {
   display: flex;
@@ -63,14 +78,21 @@
   gap: 8px;
   padding: 7px 9px;
   border-radius: var(--radius-sm);
-  background: var(--panel-hover);
+  background: color-mix(in srgb, var(--panel-hover) 55%, transparent);
   border: 1px solid transparent;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  animation: todoIn 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-.todo-row:hover { border-color: var(--border); }
+@keyframes todoIn {
+  from { opacity: 0; transform: translateY(4px); }
+}
+.todo-row:hover { border-color: var(--border); background: var(--panel-hover); }
 .todo-row.done { opacity: 0.45; }
 .todo-row.done .todo-text { text-decoration: line-through; }
+
+/* Checkbox affordance: grows slightly on hover */
 .todo-check {
+  position: relative;
   width: 17px;
   height: 17px;
   min-width: 17px;
@@ -79,11 +101,49 @@
   background: transparent;
   cursor: pointer;
   padding: 0;
-  transition: background 0.15s ease, border-color 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
 }
+.todo-check:hover { transform: scale(1.12); }
 .todo-check.checked {
   background: var(--accent);
   border-color: var(--accent);
+}
+/* drawn checkmark that completes when a task is completed */
+.todo-check.checked::after {
+  content: "";
+  position: absolute;
+  top: -2px;
+  left: -3px;
+  width: 15px;
+  height: 15px;
+  stroke-dasharray: 22;
+  stroke-dashoffset: 22;
+  animation: todoCheck 0.28s cubic-bezier(0.65, 0, 0.35, 1) 0.04s forwards;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none'%3E%3Cpath d='M3 8.5l3.4 3.4L13 5' stroke='%23fff' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+    center / 13px no-repeat;
+  filter: drop-shadow(0 0 1px color-mix(in srgb, #000 30%, transparent)) drop-shadow(0 0 1px color-mix(in srgb, #000 30%, transparent)) ;
+}
+@keyframes todoCheck {
+  to { stroke-dashoffset: 0; }
+}
+
+/* gentle empty state */
+.todo-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 18px 8px;
+}
+.todo-empty::before {
+  content: "☑️";
+  opacity: 0.4;
+  font-size: 16px;
+  filter: grayscale(0.6);
 }
 .todo-text {
   flex: 1;

@@ -15,6 +15,7 @@ export default defineConfig({
         wallpaper: "wallpaper.html",
         clock: "clock.html",
         todo: "todo.html",
+        start: "start.html",
       },
     },
   },

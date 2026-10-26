@@ -17,6 +17,7 @@ const SECTIONS: { id: Section; label: string; icon: string }[] = [
 
 const MODULES: { key: ModuleKey; label: string; hint: string }[] = [
   { key: "notch", label: "Smart Notch", hint: "Dynamic island-style bar at the top of the screen" },
+  { key: "start", label: "Start Launcher", hint: "Spotlight-style app launcher — toggle anywhere with Alt+Space" },
   { key: "clock", label: "Clock Widget", hint: "Floating desktop clock (draggable, always on top)" },
   { key: "todo", label: "To-Do Widget", hint: "Floating task list with persistence" },
   { key: "wallpaper", label: "Wallpaper Engine", hint: "Image/video wallpapers behind your desktop icons" },
@@ -147,6 +148,9 @@ export function SettingsApp() {
             <Row label="Show date" hint="Weekday/month line under the time">
               <Switch on={settings.clock.showDate} onChange={(v) => update({ clock: { showDate: v } })} />
             </Row>
+            <Row label="Show seconds" hint="Seconds tick in the digital and minimal layouts">
+              <Switch on={settings.clock.showSeconds} onChange={(v) => update({ clock: { showSeconds: v } })} />
+            </Row>
             <Divider />
             <p className="section-sub">Window — layer, input behavior, size and typography.</p>
             <ModuleWindowEditor module="clock" opts={{ capacity: true }} />
@@ -202,6 +206,15 @@ export function SettingsApp() {
                 step={1}
                 value={settings.wallpaper.offsetY}
                 onChange={(v) => update({ wallpaper: { offsetY: v } })}
+              />
+            </Row>
+            <Row label={`Dimming · ${settings.wallpaper.dimmer}%`} hint="Darkens the wallpaper so icons and widgets read better">
+              <Slider
+                min={0}
+                max={100}
+                step={5}
+                value={settings.wallpaper.dimmer}
+                onChange={(v) => update({ wallpaper: { dimmer: v } })}
               />
             </Row>
             {settings.wallpaper.kind === "video" && (
@@ -478,6 +491,12 @@ export function SettingsApp() {
                 onChange={(v) => update({ notch: { collapsed: { showName: v } } })}
               />
             </Row>
+            <Row label="Show clock in pill" hint="Live time next to the label, follows the clock format setting">
+              <Switch
+                on={settings.notch.collapsed.showClock}
+                onChange={(v) => update({ notch: { collapsed: { showClock: v } } })}
+              />
+            </Row>
             <Divider />
             <Row label="Bring notch to front" hint="Re-show the widget after moving or hiding it">
               <InvokeButton label="Reshow notch" target="notch" />
@@ -502,6 +521,13 @@ export function SettingsApp() {
           <Panel title="To-Do module">
             <Row label="Enabled" hint="Master toggle (also in General → Modules)">
               <Switch on={settings.modules.todo} onChange={(v) => update({ modules: { todo: v } })} />
+            </Row>
+            <Row label="Task ordering" hint="Smart sorts by priority and due date; Created shows newest first">
+              <Segmented
+                options={["smart", "created"]}
+                value={settings.todo.sort}
+                onChange={(v) => update({ todo: { sort: v } })}
+              />
             </Row>
             <Divider />
             <p className="section-sub">Window — layer, input behavior, size and typography.</p>

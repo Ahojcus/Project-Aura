@@ -29,7 +29,10 @@ export async function setupSettingsSync(moduleKey?: ModuleKey) {
   applyCssTokens(settings);
 
   // Apply our module toggle on boot (windows are created hidden).
-  if (moduleKey && settings.modules[moduleKey]) {
+  // The Start launcher deliberately restores hidden: it must appear only when
+  // Alt+Space is pressed, never re-popped over the desktop at every sign-in
+  // (later modules.start changes still reveal/hide it through the listener).
+  if (moduleKey && settings.modules[moduleKey] && moduleKey !== "start") {
     safeInvoke("set_module_visible", { label: LABEL, visible: true, ...modulePos(settings) });
   }
 

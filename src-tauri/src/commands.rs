@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
@@ -194,7 +195,7 @@ fn position_module_window(
     window: &tauri::WebviewWindow,
     monitor: &tauri::Monitor,
 ) {
-    if !matches!(label, "notch" | "clock" | "todo") {
+    if !matches!(label, "notch" | "clock" | "todo" | "start") {
         return;
     }
     let size = monitor.size();
@@ -202,6 +203,12 @@ fn position_module_window(
     let (w, h) = (size.width as f64, size.height as f64);
     let (mx, my) = (monitor.position().x as f64, monitor.position().y as f64);
     let pos = match label {
+        "start" => {
+            // Launcher palette: horizontally centered, ~1/3 from the top.
+            let ww = window.outer_size().map(|s| s.width as f64).unwrap_or(560.0 * scale);
+            let wh = window.outer_size().map(|s| s.height as f64).unwrap_or(460.0 * scale);
+            (mx + ((w - ww) / 2.0).max(0.0), my + ((h - wh) * 0.30).max(0.0))
+        }
         "notch" => {
             let notch_w = window.outer_size().map(|s| s.width as f64).unwrap_or(240.0);
             (mx + (w - notch_w) / 2.0, my)
@@ -668,8 +675,52 @@ pub fn autostart_is_enabled(app: AppHandle) -> bool {
     app.autolaunch().is_enabled().unwrap_or(false)
 }
 
-pub fn on_global_shortcut(app: &AppHandle, state: ShortcutState) {
+pub fn on_global_shortcut(app: &AppHandle, shortcut: &str, state: ShortcutState) {
     if state == ShortcutState::Pressed {
-        show_settings(app);
+        if shortcut.to_lowercase().contains("alt") {
+            toggle_start(app.clone());
+        } else {
+            show_settings(app);
+        }
     }
+}
+
+/// Whether the Start launcher module is enabled (mirrors `modules.start` on the
+/// frontend). The global Alt+Space shortcut is muted when the module is off.
+/// Starts false: the module ships disabled, and the launcher's webview flips
+/// this on boot so Alt+Space never reveals a blank window before then.
+static START_ENABLED: AtomicBool = AtomicBool::new(false);
+
+/// Frontend-driven enable flag for the launcher module.
+#[tauri::command]
+pub fn start_set_enabled(enabled: bool) {
+    START_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+/// Toggle the Start launcher from anywhere (global Alt+Space / tray intent).
+/// Recentering on the primary display keeps the palette predictable.
+#[tauri::command]
+pub fn toggle_start(app: AppHandle) {
+    if !START_ENABLED.load(Ordering::Relaxed) {
+        return;
+    }
+    let Some(w) = app.get_webview_window("start") else {
+        return;
+    };
+    if matches!(w.is_visible(), Ok(true)) {
+        let _ = w.hide();
+        return;
+    }
+    if let Ok(Some(mon)) = app.primary_monitor() {
+        let msize = mon.size();
+        let mpos = mon.position();
+        if let Ok(win) = w.outer_size() {
+            let x = mpos.x + ((msize.width as f64 - win.width as f64) / 2.0).max(0.0) as i32;
+            let y = mpos.y + ((msize.height as f64 - win.height as f64) * 0.32).max(0.0) as i32;
+            let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
+        }
+    }
+    let _ = w.show();
+    let _ = w.unminimize();
+    let _ = w.set_focus();
 }

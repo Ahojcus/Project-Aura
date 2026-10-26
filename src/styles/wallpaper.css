@@ -11,4 +11,19 @@
   height: 100%;
   will-change: transform;
   transform-origin: center center;
+  /* fit/position/scale changes ease instead of snapping */
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+  /* crossfade: a freshly mounted image/media fades in over the old one */
+  animation: wallpaperIn 0.6s ease both;
+}
+@keyframes wallpaperIn {
+  from { opacity: 0; }
+}
+/* Optional dark scrim (Settings → Wallpaper → Dimming), above the media */
+.wallpaper-dim {
+  position: absolute;
+  inset: 0;
+  background: #000;
+  pointer-events: none;
+  transition: opacity 0.3s ease;
 }

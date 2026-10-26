@@ -34,10 +34,10 @@ fn main() {
         ))
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts(["ctrl+shift+,", "ctrl+shift+=", "ctrl+shift+numpadplus"])
+                .with_shortcuts(["ctrl+shift+,", "ctrl+shift+=", "ctrl+shift+numpadplus", "alt+space"])
                 .expect("failed to register global shortcut")
-                .with_handler(|app, _shortcut, event| {
-                    commands::on_global_shortcut(app, event.state());
+                .with_handler(|app, shortcut, event| {
+                    commands::on_global_shortcut(app, &shortcut.to_string(), event.state());
                 })
                 .build(),
         )
@@ -77,6 +77,8 @@ fn main() {
             commands::get_monitors,
             commands::get_apps,
             commands::rescan_apps,
+            commands::start_set_enabled,
+            commands::toggle_start,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

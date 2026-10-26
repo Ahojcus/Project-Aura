@@ -42,6 +42,7 @@ export function WallpaperLayer() {
           loop
           playsInline
         />
+        {wallpaper.dimmer > 0 && <div className="wallpaper-dim" style={{ opacity: wallpaper.dimmer / 100 }} />}
       </div>
     );
   }
@@ -49,11 +50,13 @@ export function WallpaperLayer() {
   return (
     <div className="wallpaper-layer">
       <img
+        key={src}
         className="wallpaper-media"
         src={src}
         alt=""
         style={{ transform, objectFit: wallpaper.fit === "fill" ? "fill" : wallpaper.fit }}
       />
+      {wallpaper.dimmer > 0 && <div className="wallpaper-dim" style={{ opacity: wallpaper.dimmer / 100 }} />}
     </div>
   );
 }

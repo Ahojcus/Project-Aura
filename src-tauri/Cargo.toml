@@ -1,6 +1,6 @@
 [package]
 name = "aura"
-version = "0.1.0-alpha"
+version = "0.1.0-beta"
 description = "Lightweight modular desktop overlay: wallpaper engine, clock, to-do and a smart notch."
 edition = "2021"
 

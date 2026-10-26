@@ -9,6 +9,7 @@ const DUE_MS = { high: "var(--danger)", medium: "var(--warn)", low: "var(--ok)" 
 export function TodoModule() {
   const { tasks, add, toggle, remove, clearDone } = useTodo();
   const categories = useSettings((s) => s.settings.todo.categories);
+  const sortMode = useSettings((s) => s.settings.todo.sort);
   const draggable = useSettings((s) => s.settings.todo.win.draggable);
   const winStyle = useModuleWindow("todo");
   const [text, setText] = useState("");
@@ -17,10 +18,15 @@ export function TodoModule() {
   const [due, setDue] = useState("");
   const [filter, setFilter] = useState<string>("all");
 
-  const visible = useMemo(
-    () => (filter === "all" ? tasks : tasks.filter((t) => t.category === filter)),
-    [tasks, filter],
-  );
+  const visible = useMemo(() => {
+    const list = filter === "all" ? tasks : tasks.filter((t) => t.category === filter);
+    if (sortMode === "created") {
+      // Newest first; finished tasks sink to the bottom of the list.
+      return [...list].sort((a, b) => Number(a.done) - Number(b.done) || b.createdAt - a.createdAt);
+    }
+    // "smart": the store already sorts by priority / due date.
+    return list;
+  }, [tasks, filter, sortMode]);
   const openCount = tasks.filter((t) => !t.done).length;
 
   return (
@@ -44,7 +50,7 @@ export function TodoModule() {
 
       <div className="todo-list">
         {visible.length === 0 && (
-          <div style={{ color: "var(--muted)", fontSize: 12, textAlign: "center", padding: 20 }}>Nothing here.</div>
+          <div className="todo-empty">Nothing here.</div>
         )}
         {visible.map((t) => (
           <TaskRow key={t.id} task={t} onToggle={toggle} onRemove={remove} />

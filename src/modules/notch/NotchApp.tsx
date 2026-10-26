@@ -78,6 +78,7 @@ function deviceIcon(name: string): string {
 
 export function NotchApp() {
   const notch = useSettings((s) => s.settings.notch);
+  const clockFmt12h = useSettings((s) => s.settings.clock.format12h);
   const [media, setMedia] = useState<MediaInfo | null>(null);
   const [art, setArt] = useState<string | null>(null);
   const [sys, setSys] = useState<SystemSnapshot | null>(null);
@@ -321,6 +322,7 @@ export function NotchApp() {
             title={winConf.draggable ? "Drag to move the notch" : undefined}
           />
           {notch.collapsed.showName && <span className="notch-name">Aura</span>}
+          {notch.collapsed.showClock && <PillClock hour12={clockFmt12h} />}
           {notch.widgets.timer && timer.running && (
             <span className="notch-mini-timer">⏱ {fmtTime(timer.leftMs)}</span>
           )}
@@ -589,6 +591,26 @@ interface RunItem {
   name: string;
   target: string;
   typed: boolean;
+}
+
+/** Live clock shown in the collapsed pill when Settings → Smart Notch →
+ *  Collapsed → Show clock is on. Own interval so the main app doesn't
+ *  re-render every second. */
+function PillClock({ hour12 }: { hour12: boolean }) {
+  const [now, setNow] = useState(() => new Date());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(new Date()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const text = new Intl.DateTimeFormat("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    hour12,
+    hourCycle: hour12 ? "h12" : "h23",
+  }).format(now);
+  return <span className="notch-pill-clock">{text}</span>;
 }
 
 function RunWidget({ apps, onRescan }: { apps: AppInfo[]; onRescan: () => void }) {

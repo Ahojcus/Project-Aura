@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { useEffect, type CSSProperties } from "react";
 
-export type ModuleKey = "wallpaper" | "clock" | "notch" | "todo";
+export type ModuleKey = "wallpaper" | "clock" | "notch" | "todo" | "start";
 
 /** Per-module window behavior — layer, position, input mode, size, typography. */
 export interface WindowConf {
@@ -49,6 +49,7 @@ export interface Settings {
     format12h: boolean;
     timezone: string | null; // null = system timezone
     showDate: boolean;
+    showSeconds: boolean;
     win: WindowConf;
   };
   wallpaper: {
@@ -64,6 +65,8 @@ export interface Settings {
     playbackRate: number; // 0.25 .. 2
     volume: number; // 0 .. 1
     muted: boolean;
+    /** Dark overlay strength over the wallpaper, 0 (off) .. 100. */
+    dimmer: number;
   };
   notch: {
     widgets: {
@@ -90,7 +93,7 @@ export interface Settings {
     length: number;
     thickness: number;
     /** Collapsed (44px) pill options */
-    collapsed: { showName: boolean };
+    collapsed: { showName: boolean; showClock: boolean };
     /** Visual quality of the glass surface */
     appearance: {
       blur: number;          // backdrop blur, px (0 = off, cheaper)
@@ -115,20 +118,25 @@ export interface Settings {
   };
   todo: {
     categories: string[];
+    /** "smart" = by priority/due date; "created" = newest first, done last. */
+    sort: "smart" | "created";
     win: WindowConf;
   };
+  /** Spotlight-style launcher window (toggled by the global Alt+Space). */
+  start: { win: WindowConf };
 }
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
   accent: "#6c7bff",
   launchOnStartup: false,
-  modules: { wallpaper: false, clock: true, notch: true, todo: true },
+  modules: { wallpaper: false, clock: true, notch: true, todo: true, start: false },
   clock: {
     layout: "digital",
     format12h: false,
     timezone: null,
     showDate: true,
+    showSeconds: false,
     win: windowConf("topmost"),
   },
   wallpaper: {
@@ -143,6 +151,7 @@ export const DEFAULT_SETTINGS: Settings = {
     playbackRate: 1,
     volume: 0.6,
     muted: false,
+    dimmer: 0,
   },
   notch: {
     widgets: {
@@ -162,15 +171,17 @@ export const DEFAULT_SETTINGS: Settings = {
     placement: "top-center",
     length: 240, // px in notch mode / % of screen width in bar mode
     thickness: 44,
-    collapsed: { showName: true },
+    collapsed: { showName: true, showClock: false },
     appearance: { blur: 30, glassOpacity: 0.86, radius: 26, glow: 0.28, ambientArt: true, ambientColor: "" },
     animation: { speed: 1, stagger: true, hoverDelay: 120, closeDelay: 260 },
     win: { ...windowConf("topmost"), draggable: false }, // drag by the dot only
   },
   todo: {
     categories: ["Personal", "Work", "Shopping"],
+    sort: "smart",
     win: windowConf("topmost"),
   },
+  start: { win: windowConf("topmost") },
 };
 
 const STORAGE_KEY = "aura.settings.v1";
@@ -296,5 +307,6 @@ export function getLabel(): string {
   if (base.startsWith("wallpaper")) return "wallpaper";
   if (base.startsWith("clock")) return "clock";
   if (base.startsWith("todo")) return "todo";
+  if (base.startsWith("start")) return "start";
   return "settings";
 }

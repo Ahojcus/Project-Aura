@@ -39,7 +39,7 @@ export function ClockModule() {
 
   const t = getParts(now, clock.timezone, clock.format12h);
   const hour = clock.format12h ? t.hour : String(Number(t.hour) % 24).padStart(2, "0");
-  const time = `${hour}:${t.minute}`;
+  const time = `${hour}:${t.minute}${clock.showSeconds ? ":" + t.second : ""}`;
   const dateText = `${t.weekday}, ${t.month} ${t.day}`;
 
   if (clock.layout === "analog") {
