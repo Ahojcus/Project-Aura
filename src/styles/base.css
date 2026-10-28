@@ -1,3 +1,5 @@
+@import "./notch-fx.css"; /* shared by the notch page and the settings previews */
+
 :root {
   --accent: #6c7bff;
   --font-stack: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
@@ -70,7 +72,7 @@ html, body {
   transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* Toggle switch */
+/* Toggle switch — springy knob, soft glow when on, squeeze on press */
 .switch {
   position: relative;
   width: 42px;
@@ -80,7 +82,7 @@ html, body {
   border: 1px solid var(--border-strong);
   background: var(--panel-solid);
   cursor: pointer;
-  transition: background 0.2s ease, border-color 0.2s ease;
+  transition: background 0.25s ease, border-color 0.2s ease, box-shadow 0.2s ease;
   padding: 0;
 }
 .switch::after {
@@ -92,16 +94,24 @@ html, body {
   height: 18px;
   border-radius: 50%;
   background: var(--muted);
-  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1), background 0.2s ease;
+  transition:
+    transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
+    width 0.15s ease,
+    background 0.2s ease;
 }
 .switch.on {
   background: var(--accent);
   border-color: transparent;
+  box-shadow: 0 0 10px -2px color-mix(in srgb, var(--accent) 65%, transparent);
 }
 .switch.on::after {
   transform: translateX(18px);
   background: #fff;
 }
+/* press feedback: the knob stretches toward the other side (squish) */
+.switch:not(.on):active::after { width: 22px; }
+.switch.on:active::after { transform: translateX(14px);
+  width: 22px; }
 .switch:hover { border-color: var(--muted); }
 .switch.on:hover {
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
@@ -126,7 +136,14 @@ input[type="range"]::-webkit-slider-thumb {
   background: var(--accent);
   border: 2px solid rgba(255, 255, 255, 0.7);
   cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
+input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.25); }
+input[type="range"]:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.25);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
+}
+input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.15); }
 
 button, input, select {
   font-family: inherit;

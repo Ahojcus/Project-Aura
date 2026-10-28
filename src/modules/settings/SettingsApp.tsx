@@ -1,14 +1,15 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { useSettings, hasTauri } from "../../store/settings";
-import type { ModuleKey, Settings } from "../../store/settings";
+import { useSettings, hasTauri, NOTCH_FX_LABELS, NOTCH_FX_DESCRIPTIONS, NOTCH_FX_MUSIC } from "../../store/settings";
+import type { ModuleKey, Settings, NotchFx } from "../../store/settings";
+import { NotchFxBackdrop } from "../../lib/notch-fx";
 
 type Section = "general" | "appearance" | "wallpaper" | "notch" | "shortcuts" | "todo";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "general", label: "General", icon: "🏠" },
-  { id: "appearance", label: "Appearance", icon: "🎨" },
+  { id: "appearance", label: "Clock", icon: "🕐" },
   { id: "wallpaper", label: "Wallpaper", icon: "🖼" },
   { id: "notch", label: "Smart Notch", icon: "🏝" },
   { id: "shortcuts", label: "Shortcuts", icon: "⚡" },
@@ -69,7 +70,10 @@ export function SettingsApp() {
         </div>
       </aside>
 
+      {/* key={section} re-mounts the wrapper on nav change → replays the
+          entrance animation; children above Panel keep their state */}
       <main className="settings-content">
+        <div key={section} className="panel-anim">
         {section === "general" && (
           <Panel title="General">
             <Row label="Theme" hint="Switch between dark and light surfaces">
@@ -121,7 +125,7 @@ export function SettingsApp() {
         )}
 
         {section === "appearance" && (
-          <Panel title="Appearance · Clock widget">
+          <Panel title="Clock">
             <Row label="Clock layout" hint="Three minimal layouts">
               <Segmented
                 options={["digital", "analog", "minimal"]}
@@ -434,6 +438,28 @@ export function SettingsApp() {
               />
             </Row>
             <Divider />
+            <p className="section-sub">
+              Background effect — an animated scene behind the notch chrome and panels.
+              “♪ Music” freezes on purpose while nothing is playing.
+            </p>
+            <div className="nfx-grid">
+              {(Object.keys(NOTCH_FX_LABELS) as NotchFx[]).map((fx) => (
+                <button
+                  key={fx}
+                  className={`nfx-tile${settings.notch.fx === fx ? " active" : ""}`}
+                  title={NOTCH_FX_DESCRIPTIONS[fx]}
+                  onClick={() => update({ notch: { fx } })}
+                >
+                  <span className="nfx-frame">
+                    <NotchFxBackdrop fx={fx} playing />
+                  </span>
+                  <span className="nfx-tile-name">{NOTCH_FX_LABELS[fx]}</span>
+                  <span className="nfx-tile-desc">{NOTCH_FX_DESCRIPTIONS[fx]}</span>
+                  {NOTCH_FX_MUSIC.includes(fx) && <span className="nfx-badge">♪ Music</span>}
+                </button>
+              ))}
+            </div>
+            <Divider />
             <p className="section-sub">Motion — how the notch behaves.</p>
             <Row
               label={`Animation speed · ${settings.notch.animation.speed.toFixed(2)}×`}
@@ -457,20 +483,8 @@ export function SettingsApp() {
               />
             </Row>
             <Row
-              label={`Hover delay · ${settings.notch.animation.hoverDelay}ms`}
-              hint="How long the pointer must rest before the notch opens"
-            >
-              <Slider
-                min={0}
-                max={500}
-                step={10}
-                value={settings.notch.animation.hoverDelay}
-                onChange={(v) => update({ notch: { animation: { hoverDelay: v } } })}
-              />
-            </Row>
-            <Row
               label={`Close grace · ${settings.notch.animation.closeDelay}ms`}
-              hint="How long the notch stays open after the pointer leaves"
+              hint="How long the panel stays open after the pointer leaves before it closes"
             >
               <Slider
                 min={0}
@@ -538,6 +552,7 @@ export function SettingsApp() {
             </p>
           </Panel>
         )}
+        </div>
       </main>
     </div>
   );

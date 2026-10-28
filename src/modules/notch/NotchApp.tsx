@@ -1,9 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { useSettings, useModuleWindow } from "../../store/settings";
 import { hasTauri } from "../../store/settings";
 import type { Settings } from "../../store/settings";
 import { dragHandle } from "../../lib/drag";
+import { NotchFxBackdrop } from "../../lib/notch-fx";
 
 interface MediaInfo {
   title: string;
@@ -76,6 +77,82 @@ function deviceIcon(name: string): string {
   return "📶";
 }
 
+// ---------------------------------------------------------------------------
+// Monochrome line icons (24×24 stroke SVGs, each a self-contained component
+// so React always renders them with the SVG namespace) for the tab bar
+// ---------------------------------------------------------------------------
+
+const ICON_STROKE = {
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  strokeWidth: 2,
+  strokeLinecap: "round",
+  strokeLinejoin: "round",
+} as const;
+
+const RunIcon = () => (
+  <svg {...ICON_STROKE} aria-hidden>
+    <rect x="3.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="3.5" width="7" height="7" rx="1.5" />
+    <rect x="3.5" y="13.5" width="7" height="7" rx="1.5" />
+    <rect x="13.5" y="13.5" width="7" height="7" rx="1.5" />
+  </svg>
+);
+const MediaIcon = () => (
+  <svg {...ICON_STROKE} aria-hidden>
+    <path d="M9 18V5.5L21 3v12.5" />
+    <circle cx="6" cy="18" r="3" />
+    <circle cx="18" cy="15.5" r="3" />
+  </svg>
+);
+const MonitorsIcon = () => (
+  <svg {...ICON_STROKE} aria-hidden>
+    <path d="M3 12h4l3-8 4 16 3-8h4" />
+  </svg>
+);
+const TimerIcon = () => (
+  <svg {...ICON_STROKE} aria-hidden>
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 7v5l3.5 2" />
+  </svg>
+);
+const BluetoothIcon = () => (
+  <svg {...ICON_STROKE} aria-hidden>
+    <path d="M6.5 7.5 17 17l-5 4V3l5 4L6.5 16.5" />
+  </svg>
+);
+const ClipboardIcon = () => (
+  <svg {...ICON_STROKE} aria-hidden>
+    <rect x="5" y="4" width="14" height="17" rx="2" />
+    <path d="M9 2h6v4H9z" />
+  </svg>
+);
+const ShortcutsIcon = () => (
+  <svg {...ICON_STROKE} aria-hidden>
+    <path d="M13 2 4.5 13.5H11l-1 8.5L18.5 10H13z" />
+  </svg>
+);
+const SettingsIcon = () => (
+  <svg {...ICON_STROKE} aria-hidden>
+    <circle cx="12" cy="12" r="3" />
+    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+  </svg>
+);
+
+// Monotonic tab order so the icon row never reshuffles when widgets toggle.
+type TabKey = "run" | "media" | "monitors" | "timer" | "bluetooth" | "clipboard" | "shortcuts";
+const TAB_KEYS: TabKey[] = ["run", "media", "monitors", "timer", "bluetooth", "clipboard", "shortcuts"];
+const TAB_ICONS: Record<TabKey, () => ReactNode> = {
+  run: RunIcon,
+  media: MediaIcon,
+  monitors: MonitorsIcon,
+  timer: TimerIcon,
+  bluetooth: BluetoothIcon,
+  clipboard: ClipboardIcon,
+  shortcuts: ShortcutsIcon,
+};
+
 export function NotchApp() {
   const notch = useSettings((s) => s.settings.notch);
   const clockFmt12h = useSettings((s) => s.settings.clock.format12h);
@@ -86,10 +163,13 @@ export function NotchApp() {
   const [devices, setDevices] = useState<BtDevice[]>([]);
   const [apps, setApps] = useState<AppInfo[]>([]);
   const [appsBump, setAppsBump] = useState(0);
-  const [expanded, setExpanded] = useState(false); // CSS animation state
-  const [windowExpanded, setWindowExpanded] = useState(false); // actual window geometry
+  // Click-driven UX: activeTab = which panel is open (CSS reveal), and the
+  // window geometry flips *after* the fade-out so closing looks smooth.
+  const [activeTab, setActiveTab] = useState<TabKey | null>(null);
+  const [windowExpanded, setWindowExpanded] = useState(false);
   const [timer, setTimer] = useState<TimerState>({ running: false, totalMs: 0, leftMs: 0 });
   const artKey = useRef("");
+  const expanded = activeTab !== null;
 
   // Per-module window configuration: layer level, manual coordinates,
   // click-through; returns text-style CSS vars for the widget.
@@ -186,19 +266,11 @@ export function NotchApp() {
   // Target display: origin coordinates identify the monitor; null = primary.
   const monitorArg = winConf.monitor ? [winConf.monitor.x, winConf.monitor.y] : null;
 
-  // Measured height of the expanded panel — the window grows to fit every
-  // enabled widget instead of clipping at a fixed 330px.
+  // Measured height of the open panel — the window grows to fit it instead of
+  // clipping at a fixed size.
   const expandedRef = useRef<HTMLDivElement | null>(null);
   const [contentH, setContentH] = useState(0);
-  const widgetsKey = [
-    notch.widgets.run,
-    notch.widgets.media,
-    notch.widgets.monitors,
-    notch.widgets.timer,
-    notch.widgets.bluetooth,
-    notch.widgets.clipboard,
-    notch.widgets.shortcuts,
-  ].map((b) => Number(b)).join("");
+  const widgetsKey = TAB_KEYS.map((k) => Number(notch.widgets[k])).join("");
   useEffect(() => {
     let raf = 0;
     const id = window.setTimeout(() => {
@@ -206,12 +278,32 @@ export function NotchApp() {
         const h = expandedRef.current?.scrollHeight ?? 0;
         if (h > 0) setContentH(Math.ceil(h) + 6);
       });
-    }, 60); // let widget content settle after toggles
+    }, 60); // let panel content settle after toggles
     return () => {
       window.clearTimeout(id);
       cancelAnimationFrame(raf);
     };
-  }, [widgetsKey, art]);
+  }, [widgetsKey, art, activeTab]);
+
+  // Live re-measurement *while a panel is open*. scrollHeight changes as
+  // dynamic content arrives that the widget toggles don't track — a song
+  // gaining its progress row, clipboard entries added by Copy, typed Run
+  // results, the timer control row — so the window grows in sync instead of
+  // clipping items. Loop runs only while open (zero idle cost).
+  useEffect(() => {
+    if (!expanded) return;
+    let raf = 0;
+    const tick = () => {
+      const h = expandedRef.current?.scrollHeight ?? 0;
+      if (h > 0) {
+        const next = Math.ceil(h) + 6;
+        setContentH((prev) => (Math.abs(next - prev) > 1 ? next : prev));
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [expanded]);
 
   useEffect(() => {
     if (!hasTauri()) return;
@@ -252,37 +344,70 @@ export function NotchApp() {
   const toggleTimer = () => setTimer((t) => ({ ...t, running: !t.running }));
   const resetTimer = () => setTimer({ running: false, totalMs: 0, leftMs: 0 });
 
-  // --------------------------------------------------- expand/collapse timing
-  const expandTimer = useRef(0);
+  // ------------------------------------------------------- open/close timing
   const shrinkTimer = useRef(0);
+  const leaveTimer = useRef(0);
+  const openedAt = useRef(0);
 
-  /**
-   * Hover-driven expand/collapse with sequenced animations (timings are
-   * user-configurable, see `notch.animation` in the settings store):
-   * - opening:  widen the window first, then the CSS reveals the content;
-   * - closing:  let the CSS fade-out play (content shrinks back), THEN snap
-   *             the window back — the layout effect applies the collapsed
-   *             geometry once `expanded` flips to false.
-   */
-  const setExpandedState = (value: boolean, delay = 0) => {
-    window.clearTimeout(expandTimer.current);
+  /** Close: fade the panel out first, then snap the window back. */
+  const closePanel = () => {
     window.clearTimeout(shrinkTimer.current);
-    expandTimer.current = window.setTimeout(() => {
-      if (value) {
-        setWindowExpanded(true); // widen the window first…
-        setExpanded(true);       // …then the CSS reveals the content
-      } else {
-        setExpanded(false);      // CSS fade-out starts now…
-        // …and the window snaps back after the fade — layout effect handles it
-        shrinkTimer.current = window.setTimeout(
-          () => setWindowExpanded(false),
-          Math.max(0, Math.round(220 / notch.animation.speed)),
-        );
-      }
-    }, delay);
+    window.clearTimeout(leaveTimer.current);
+    setActiveTab(null);
+    shrinkTimer.current = window.setTimeout(
+      () => setWindowExpanded(false),
+      Math.max(0, Math.round(220 / notch.animation.speed)),
+    );
   };
 
-  const anyWidget = Object.values(notch.widgets).some(Boolean);
+  /** Toggle a tab: clicking the same icon closes the panel. */
+  const toggleTab = (key: TabKey) => {
+    window.clearTimeout(leaveTimer.current);
+    if (key === activeTab) {
+      closePanel();
+      return;
+    }
+    window.clearTimeout(shrinkTimer.current);
+    setActiveTab(key);
+    setWindowExpanded(true);
+    // Opening resizes the window under the cursor, which can fire a spurious
+    // mouseleave; forgive leaves during this settle window.
+    openedAt.current = Date.now();
+  };
+  useEffect(() => {
+    if (!expanded) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") closePanel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expanded, notch.animation.speed]);
+
+  /**
+   * Closing affordances: Esc, the ✕ button, and leaving the window (with the
+   * settings' close-delay as grace so a slipped cursor doesn't slam it shut).
+   *
+   * A pointer-leave must be verified before closing: when the window GROWS
+   * under a stationary cursor (panel opening while the pointer rests on the
+   * bar), WebView2 dispatches mouseleave even though the cursor is still over
+   * the notch — which used to make the notch open and then close itself in a
+   * flicker loop. At expiry, hit-test the recorded cursor position: if there
+   * is still an element under it the pointer never actually left.
+   */
+  const onMouseLeave = (e: ReactMouseEvent) => {
+    if (Date.now() - openedAt.current < 350) return; // settling after open
+    const px = e.clientX;
+    const py = e.clientY;
+    window.clearTimeout(leaveTimer.current);
+    leaveTimer.current = window.setTimeout(() => {
+      const hit = document.elementFromPoint(px, py);
+      if (!hit) closePanel(); // pointer is genuinely outside the webview
+    }, notch.animation.closeDelay);
+  };
+  const onMouseEnter = () => window.clearTimeout(leaveTimer.current);
+
+  const anyWidget = TAB_KEYS.some((k) => notch.widgets[k]);
 
   // Customization knobs → CSS custom properties consumed by notch.css
   const customVars = {
@@ -292,6 +417,7 @@ export function NotchApp() {
     "--nglow": String(notch.appearance.glow),
     ...((notch.appearance.ambientColor ? { "--nambient": notch.appearance.ambientColor } : {})),
     "--nspeed": String(1 / Math.max(0.2, notch.animation.speed)),
+    "--nbar": `${notch.thickness}px`,
     ...winStyle,
   } as CSSProperties;
 
@@ -299,89 +425,153 @@ export function NotchApp() {
     "notch-pill",
     expanded ? "open" : "",
     notch.appearance.ambientArt ? "" : "no-ambient",
-    notch.animation.stagger ? "" : "no-stagger",
   ]
     .filter(Boolean)
     .join(" ");
+
+  const tabs = TAB_KEYS.filter((k) => notch.widgets[k]);
 
   return (
     <div
       className={`notch-root${notch.layout === "bar" ? " bar" : ""}${notch.placement.startsWith("bottom") ? " bottom" : ""}`}
       style={customVars}
-    >
-      <div
+    >      <div
         className={pillClasses}
-        onMouseEnter={() => setExpandedState(true, notch.animation.hoverDelay)}
-        onMouseLeave={() => setExpandedState(false, notch.animation.closeDelay)}
-        onClick={() => !expanded && setExpandedState(true, 0)}
+        onMouseEnter={onMouseEnter}
+        onMouseLeave={onMouseLeave}
       >
-        <div className="notch-collapsed">
+        {/* Selected animated background scene (Settings → Smart Notch →
+           Background effect); sits behind bar + panel, freezes while idle for
+           the music-reactive scenes. */}
+        <NotchFxBackdrop fx={notch.fx} playing={media?.status === "playing"} />
+        <div className="notch-collapsed"
+          {...(winConf.draggable ? { onPointerDown: dragHandle } : undefined)}
+        >
+          <span className="notch-tabs">
+            {!anyWidget && <span className="notch-small nb-hint">No widgets enabled — set them up in Settings</span>}
+            {tabs.map((key) => (
+              <button
+                key={key}
+                className={`ntab${activeTab === key ? " active" : ""}`}
+                title={TAB_TITLES[key]}
+                aria-label={TAB_TITLES[key]}
+                aria-pressed={activeTab === key}
+                onClick={() => toggleTab(key)}
+              >
+                {TAB_ICONS[key]()}
+              </button>
+            ))}
+          </span>
+
           <span
             className="notch-dot"
-            {...(winConf.draggable ? { onPointerDown: dragHandle } : undefined)}
-            title={winConf.draggable ? "Drag to move the notch" : undefined}
+            title={winConf.draggable ? "Drag to move the notch" : "Status"}
           />
-          {notch.collapsed.showName && <span className="notch-name">Aura</span>}
-          {notch.collapsed.showClock && <PillClock hour12={clockFmt12h} />}
-          {notch.widgets.timer && timer.running && (
-            <span className="notch-mini-timer">⏱ {fmtTime(timer.leftMs)}</span>
-          )}
-          {notch.widgets.monitors && sys && (
-            <span className="notch-mini-mon">{sys.cpuPercent.toFixed(0)}% · {sys.memUsedGb.toFixed(0)}GB</span>
-          )}
-          {notch.widgets.media && media && (
-            media.durationMs > 0 ? (
-              /* real song progress — advances with the track (Windows SMTC
-                 carries no audio spectrum, so bars can't "dance" to music) */
-              <span
-                className={`notch-mini-progress${media.status === "playing" ? "" : " paused"}`}
-                title={`${media.title} — ${media.status}`}
-              >
-                <span style={{ width: `${Math.min(100, Math.max(0, (media.positionMs / media.durationMs) * 100))}%` }} />
+
+          <span className="notch-status" onPointerDown={(e) => e.stopPropagation()}>
+            {notch.widgets.timer && timer.running && (
+              <span className="notch-mini-timer">⏱ {fmtTime(timer.leftMs)}</span>
+            )}
+            {notch.widgets.monitors && sys && (
+              <span className="nst-chip" title="Memory usage">
+                {sys.memTotalGb > 0 ? `${Math.round((sys.memUsedGb / sys.memTotalGb) * 100)}%` : `${sys.memUsedGb.toFixed(0)}GB`}
               </span>
-            ) : (
-              /* no timeline available — fall back to the decorative bars */
-              <span
-                className={`notch-eq${media.status === "playing" ? "" : " paused"}`}
-                title={`${media.title} — ${media.status}`}
-              >
-                <i /><i /><i />
+            )}
+            {notch.widgets.monitors && sys && (
+              <span className="nst-chip" title="Network down / up">
+                ↓{fmtRate(sys.netDownBps)}
               </span>
-            )
-          )}
+            )}
+            {notch.widgets.media && media && (
+              media.durationMs > 0 ? (
+                /* real song progress — advances with the track (Windows SMTC
+                   carries no audio spectrum, so bars can't "dance" to music) */
+                <span
+                  className={`notch-mini-progress${media.status === "playing" ? "" : " paused"}`}
+                  title={`${media.title} — ${media.status}`}
+                >
+                  <span style={{ width: `${Math.min(100, Math.max(0, (media.positionMs / media.durationMs) * 100))}%` }} />
+                </span>
+              ) : (
+                /* no timeline available — fall back to the decorative bars */
+                <span
+                  className={`notch-eq${media.status === "playing" ? "" : " paused"}`}
+                  title={`${media.title} — ${media.status}`}
+                >
+                  <i /><i /><i />
+                </span>
+              )
+            )}
+            {notch.collapsed.showClock && <PillClock hour12={clockFmt12h} />}
+            <button
+              className="nst-btn"
+              title="Open Aura settings"
+              aria-label="Open Aura settings"
+              onClick={() => {
+                if (hasTauri()) void invoke("toggle_settings");
+              }}
+            >
+              <SettingsIcon />
+            </button>
+            {expanded && (
+              <button
+                className="nst-btn"
+                title="Close panel"
+                aria-label="Close panel"
+                onClick={closePanel}
+              >
+                <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} fill="none" strokeLinecap="round" aria-hidden>
+                  <path d="M6 6l12 12M18 6 6 18" />
+                </svg>
+              </button>
+            )}
+          </span>
         </div>
 
         <div className="notch-expanded" ref={expandedRef}>
-          {!anyWidget && (
-            <div className="notch-empty">No notch widgets enabled — enable them in Settings.</div>
+          {tabs.map((key) =>
+            activeTab !== key ? null : (
+              <div key={key} className="npanel">
+                {key === "run" && <RunWidget apps={apps} onRescan={reloadApps} />}
+                {key === "media" && (
+                  <MediaWidget
+                    media={media}
+                    art={art}
+                    ambient={notch.appearance.ambientArt}
+                    ambientColor={notch.appearance.ambientColor}
+                  />
+                )}
+                {key === "timer" && (
+                  <TimerWidget timer={timer} onStart={startTimer} onToggle={toggleTimer} onReset={resetTimer} />
+                )}
+                {key === "monitors" && <MonitorsWidget sys={sys} />}
+                {key === "bluetooth" && <BluetoothWidget devices={devices} />}
+                {key === "clipboard" && <ClipboardWidget entries={clipboard} />}
+                {key === "shortcuts" && <ShortcutsWidget shortcuts={notch.shortcuts} />}
+              </div>
+            ),
           )}
-          {notch.widgets.run && <RunWidget apps={apps} onRescan={reloadApps} />}
-          {notch.widgets.media && (
-            <MediaWidget
-              media={media}
-              art={art}
-              ambient={notch.appearance.ambientArt}
-              ambientColor={notch.appearance.ambientColor}
-            />
-          )}
-          {notch.widgets.timer && (
-            <TimerWidget timer={timer} onStart={startTimer} onToggle={toggleTimer} onReset={resetTimer} />
-          )}
-          {notch.widgets.monitors && <MonitorsWidget sys={sys} />}
-          {notch.widgets.bluetooth && <BluetoothWidget devices={devices} />}
-          {notch.widgets.clipboard && <ClipboardWidget entries={clipboard} />}
-          {notch.widgets.shortcuts && <ShortcutsWidget shortcuts={notch.shortcuts} />}
         </div>
       </div>
     </div>
   );
 }
 
+const TAB_TITLES: Record<TabKey, string> = {
+  run: "Run — search apps and open URLs",
+  media: "Now playing",
+  monitors: "System monitor",
+  timer: "Focus timer",
+  bluetooth: "Bluetooth devices",
+  clipboard: "Clipboard history",
+  shortcuts: "Shortcuts",
+};
+
 /**
  * Widget components live at MODULE scope, not inside NotchApp. Defining them
  * inline recreated their function identity on every parent re-render (the 1s
- * media poll), which remounted the whole expanded subtree every second and
- * replayed the opening/stagger animation each time.
+ * media poll), which remounted the whole panel subtree every second and
+ * replayed the opening animation each time.
  */
 
 function MediaWidget({
@@ -479,38 +669,40 @@ function TimerWidget({
   );
 }
 
+/**
+ * Monitor panel: flat Processor/Memory bar rows (like the reference mock)
+ * plus Download/Upload tiles — replaces the old 4-up donut grid, which
+ * cramped once every widget lived in one column.
+ */
 function MonitorsWidget({ sys }: { sys: SystemSnapshot | null }) {
   const cpu = sys?.cpuPercent ?? 0;
   const ramPct = sys && sys.memTotalGb > 0 ? Math.min(100, (sys.memUsedGb / sys.memTotalGb) * 100) : 0;
+  const ramGb = sys?.memUsedGb ?? 0;
   return (
     <div className="notch-section notch-monitors">
-      <div className="notch-stat">
-        <div className="notch-ringwrap">
-          <div
-            className="notch-ring"
-            style={{ background: `conic-gradient(var(--accent) ${sys ? cpu : 0}%, var(--ntrack) 0)` }}
-          />
-          <span className="notch-ring-text">{sys ? `${cpu.toFixed(0)}%` : "—"}</span>
+      <div className="nstat">
+        <span className="nstat-label">Processor</span>
+        <span className="nstat-bar">
+          <i style={{ width: `${Math.min(100, Math.max(0, cpu))}%` }} />
+        </span>
+        <span className="nstat-value">{sys ? `${cpu.toFixed(0)}%` : "—"}</span>
+      </div>
+      <div className="nstat">
+        <span className="nstat-label">Memory</span>
+        <span className="nstat-bar">
+          <i style={{ width: `${ramPct}%` }} />
+        </span>
+        <span className="nstat-value">{sys ? `${ramPct.toFixed(0)}% · ${ramGb.toFixed(1)}GB` : "—"}</span>
+      </div>
+      <div className="nmon-net">
+        <div className="nmon-tile">
+          <span className="nnet-dir">↓ Download</span>
+          <span className="nnet-rate">{sys ? fmtRate(sys.netDownBps) : "—"}</span>
         </div>
-        <span className="stat-label">CPU</span>
-      </div>
-      <div className="notch-stat">
-        <div className="notch-ringwrap">
-          <div
-            className="notch-ring"
-            style={{ background: `conic-gradient(var(--accent) ${ramPct}%, var(--ntrack) 0)` }}
-          />
-          <span className="notch-ring-text">{sys ? `${sys.memUsedGb.toFixed(1)}G` : "—"}</span>
+        <div className="nmon-tile">
+          <span className="nnet-dir">↑ Upload</span>
+          <span className="nnet-rate">{sys ? fmtRate(sys.netUpBps) : "—"}</span>
         </div>
-        <span className="stat-label">RAM</span>
-      </div>
-      <div className="notch-stat">
-        <div className="notch-net">↓ {sys ? fmtRate(sys.netDownBps) : "—"}</div>
-        <span className="stat-label">Down</span>
-      </div>
-      <div className="notch-stat">
-        <div className="notch-net">↑ {sys ? fmtRate(sys.netUpBps) : "—"}</div>
-        <span className="stat-label">Up</span>
       </div>
     </div>
   );
@@ -535,15 +727,12 @@ function BluetoothWidget({ devices }: { devices: BtDevice[] }) {
 }
 
 function ClipboardWidget({ entries }: { entries: ClipboardEntry[] }) {
-  if (entries.length === 0) {
-    return (
-      <div className="notch-section notch-clip">
-        <span className="notch-small">Copy some text anywhere — snippets appear here.</span>
-      </div>
-    );
-  }
   return (
     <div className="notch-section notch-clip">
+      <div className="notch-section-head"><span>Copied text</span></div>
+      {entries.length === 0 && (
+        <span className="notch-small">Copy some text anywhere — snippets appear here.</span>
+      )}
       {entries.slice(0, 6).map((e, i) => (
         <button
           key={`${e.at_ms}-${i}`}
@@ -593,7 +782,7 @@ interface RunItem {
   typed: boolean;
 }
 
-/** Live clock shown in the collapsed pill when Settings → Smart Notch →
+/** Live clock shown in the bar when Settings → Smart Notch →
  *  Collapsed → Show clock is on. Own interval so the main app doesn't
  *  re-render every second. */
 function PillClock({ hour12 }: { hour12: boolean }) {
@@ -654,21 +843,11 @@ function RunWidget({ apps, onRescan }: { apps: AppInfo[]; onRescan: () => void }
 
   return (
     <div className="notch-section notch-run">
-      <div className="notch-section-head">
-        <span>Run</span>
-        <button
-          className="nrun-rescan"
-          title="Re-scan Start Menu apps"
-          onClick={onRescan}
-          aria-label="Re-scan Start Menu apps"
-        >
-          ↻
-        </button>
-      </div>
       <input
         className="nrun-input"
         placeholder="Search apps or type a URL / path…"
         value={query}
+        autoFocus
         spellCheck={false}
         onChange={(e) => setQuery(e.target.value)}
         onKeyDown={(e) => {
@@ -681,12 +860,10 @@ function RunWidget({ apps, onRescan }: { apps: AppInfo[]; onRescan: () => void }
           } else if (e.key === "ArrowUp") {
             e.preventDefault();
             setSel((s) => Math.max(0, s - 1));
-          } else if (e.key === "Escape") {
-            setQuery("");
           }
         }}
       />
-      {q && (
+      {q ? (
         <div className="nrun-list">
           {items.map((it, i) => (
             <button
@@ -701,7 +878,24 @@ function RunWidget({ apps, onRescan }: { apps: AppInfo[]; onRescan: () => void }
               {!it.typed && <span className="nrun-type">app</span>}
             </button>
           ))}
+          <button
+            className="nrun-rescan as-row"
+            title="Re-scan Start Menu apps"
+            onClick={onRescan}
+            aria-label="Re-scan Start Menu apps"
+          >
+            ↻ Re-scan Start Menu
+          </button>
         </div>
+      ) : (
+        <button
+          className="nrun-rescan as-row"
+          title="Re-scan Start Menu apps"
+          onClick={onRescan}
+          aria-label="Re-scan Start Menu apps"
+        >
+          ↻ Re-scan Start Menu
+        </button>
       )}
     </div>
   );

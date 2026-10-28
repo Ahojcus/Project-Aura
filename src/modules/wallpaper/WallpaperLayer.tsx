@@ -24,6 +24,46 @@ export function WallpaperLayer() {
     }
   }, [wallpaper.volume, wallpaper.muted, wallpaper.playbackRate, src]);
 
+  // Kick the video whenever its source or relevant settings change. An
+  // `autoPlay` attribute alone is unreliable: the embedded window can free its
+  // play() promise (WebView2 blocked autoplay while audible, or Chromium
+  // paused/never started it), which left the wallpaper frozen on the first
+  // frame. Play imperatively; if an audible start is refused, retry muted so
+  // the wallpaper still animates.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+
+    let cancelled = false;
+    const kick = () => {
+      if (cancelled) return;
+      v.play().catch(() => {
+        // Autoplay with sound refused → animate silently instead of freezing.
+        v.muted = true;
+        v.play().catch(() => { /* give up until the next kick */ });
+      });
+    };
+
+    const onLoaded = () => kick();
+    const onStalled = () => { if (v.paused) kick(); };
+    const onVisibility = () => { if (!document.hidden) kick(); };
+
+    v.addEventListener("loadeddata", onLoaded);
+    v.addEventListener("stalled", onStalled);
+    v.addEventListener("pause", onStalled);
+    document.addEventListener("visibilitychange", onVisibility);
+    // The element may already be ready when this effect runs (hot reload etc.).
+    void (v.readyState >= 2 ? kick() : v.load());
+
+    return () => {
+      cancelled = true;
+      v.removeEventListener("loadeddata", onLoaded);
+      v.removeEventListener("stalled", onStalled);
+      v.removeEventListener("pause", onStalled);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [src]);
+
   if (wallpaper.kind === "none" || !wallpaper.path || !src) {
     return null;
   }
@@ -41,6 +81,7 @@ export function WallpaperLayer() {
           autoPlay
           loop
           playsInline
+          disablePictureInPicture
         />
         {wallpaper.dimmer > 0 && <div className="wallpaper-dim" style={{ opacity: wallpaper.dimmer / 100 }} />}
       </div>

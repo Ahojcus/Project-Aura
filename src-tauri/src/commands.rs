@@ -384,23 +384,20 @@ pub fn notch_apply_layout(
 
     let is_bar = layout == "bar";
     let thickness = thickness.clamp(30.0, 96.0);
-    let (width, height) = if expanded {
-        let w = if is_bar {
-            sw * (length / 100.0).clamp(0.25, 1.0)
-        } else {
-            660.0f64.max(length.clamp(160.0, sw * 0.8))
-        };
-        let content = content_height.unwrap_or(286.0).max(140.0);
-        // Collapsed pill (44) + measured content, never taller than 85% of the
-        // screen so widgets stay reachable.
-        (w.round(), (44.0 + content).min(sh * 0.85).round())
+    // The bar strip is always as wide as the panel it opens (the icon tabs +
+    // status chips don't fit a narrower pill), so both states share a width.
+    let width = if is_bar {
+        sw * (length / 100.0).clamp(0.25, 1.0)
     } else {
-        let w = if is_bar {
-            sw * (length / 100.0).clamp(0.25, 1.0)
-        } else {
-            length.clamp(160.0, sw * 0.8)
-        };
-        (w.round(), thickness)
+        660.0f64.max(length.clamp(160.0, sw * 0.8))
+    };
+    let (width, height) = if expanded {
+        let content = content_height.unwrap_or(286.0).max(140.0);
+        // Bar strip (thickness) + measured panel content, never taller than
+        // 85% of the screen so widgets stay reachable.
+        (width.round(), (thickness + content).min(sh * 0.85).round())
+    } else {
+        (width.round(), thickness)
     };
 
     // Anchor edges/corners keep a small breathing 8px margin from the edge.
@@ -530,10 +527,13 @@ pub fn wallpaper_embed(app: &AppHandle, embed: bool) -> bool {
 #[cfg(windows)]
 fn hwnd_of(window: &tauri::WebviewWindow) -> Option<windows::Win32::Foundation::HWND> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-    #[allow(deprecated)]
-    use raw_window_handle::HasRawWindowHandle as _;
     use windows::Win32::Foundation::HWND;
-    let raw = window.window_handle().ok()?.raw_window_handle().ok()?;
+    let raw = window
+        .window_handle()
+        .ok()?
+        .window_handle()
+        .ok()?
+        .as_raw();
     match raw {
         RawWindowHandle::Win32(h) => Some(HWND(h.hwnd.get() as *mut core::ffi::c_void)),
         _ => None,

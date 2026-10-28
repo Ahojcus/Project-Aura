@@ -89,6 +89,9 @@ export interface Settings {
       | "bottom-left"
       | "bottom-center"
       | "bottom-right";
+    /** Animated background effect (see `NotchFx`, music-reactive subset in
+     *  NOTCH_FX_MUSIC — those animate only while something is playing). */
+    fx: NotchFx;
     /** Independent size controls: px in notch mode, % of screen width in bar mode. */
     length: number;
     thickness: number;
@@ -125,6 +128,48 @@ export interface Settings {
   /** Spotlight-style launcher window (toggled by the global Alt+Space). */
   start: { win: WindowConf };
 }
+
+/** Animated background styles for the Smart Notch. */
+export type NotchFx =
+  | "none"
+  | "visualizer"
+  | "waves"
+  | "synthwave"
+  | "fireflies"
+  | "aurora"
+  | "nightsky"
+  | "holographic"
+  | "topo"
+  | "liquid";
+
+export const NOTCH_FX_LABELS: Record<NotchFx, string> = {
+  none: "None",
+  visualizer: "Visualizer",
+  waves: "Waves",
+  synthwave: "Synthwave",
+  fireflies: "Fireflies",
+  aurora: "Aurora",
+  nightsky: "Night sky",
+  holographic: "Holographic",
+  topo: "Topographic",
+  liquid: "Midnight liquid",
+};
+
+export const NOTCH_FX_DESCRIPTIONS: Record<NotchFx, string> = {
+  none: "Clean glass",
+  visualizer: "Spectrum bars",
+  waves: "Tides",
+  synthwave: "Retro sun and neon grid",
+  fireflies: "Drifting sparks of light",
+  aurora: "Northern lights",
+  nightsky: "Stars and meteors",
+  holographic: "Iridescent foil sheen",
+  topo: "Slow contour lines",
+  liquid: "Dark flowing silk",
+};
+
+/** Effects that react to the playing state (move only while music plays). */
+export const NOTCH_FX_MUSIC: readonly NotchFx[] = ["visualizer", "waves", "synthwave", "liquid"];
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
@@ -169,6 +214,7 @@ export const DEFAULT_SETTINGS: Settings = {
     ],
     layout: "notch",
     placement: "top-center",
+    fx: "none",
     length: 240, // px in notch mode / % of screen width in bar mode
     thickness: 44,
     collapsed: { showName: true, showClock: false },

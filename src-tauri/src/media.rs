@@ -52,6 +52,25 @@ fn status_of(session: &GlobalSystemMediaTransportControlsSession) -> String {
     "stopped".into()
 }
 
+/// True for media sessions owned by this app itself. The wallpaper window's
+/// video registers its audio with SMTC like any player, which made the media
+/// widget "play" the wallpaper (and let the play button pause the desktop).
+/// WebView2 sessions report an id containing `msedgewebview2`; our own exe id
+/// covers any other in-app media.
+fn is_session_self(session: &GlobalSystemMediaTransportControlsSession) -> bool {
+    let src = session
+        .SourceAppUserModelId()
+        .map(|s| s.to_string().to_lowercase())
+        .unwrap_or_default();
+    let mut self_ids = vec!["msedgewebview2".to_string()];
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(stem) = exe.file_stem().and_then(|s| s.to_str()) {
+            self_ids.push(stem.to_lowercase());
+        }
+    }
+    self_ids.iter().any(|id| !id.is_empty() && src.contains(id))
+}
+
 pub fn spawn_media_thread() -> MediaState {
     let state = MediaState::default();
     let state2 = state.clone();
@@ -100,10 +119,13 @@ fn tick(
         return Ok(());
     }
 
-    // Prefer a playing session; fall back to the first one.
+    // Prefer a playing, non-self session; fall back to the first non-self one.
     let mut chosen: Option<GlobalSystemMediaTransportControlsSession> = None;
     for i in 0..count {
         let s = sessions.GetAt(i as u32)?;
+        if is_session_self(&s) {
+            continue;
+        }
         if status_of(&s) == "playing" {
             chosen = Some(s);
             break;
@@ -113,6 +135,10 @@ fn tick(
         }
     }
     let Some(session) = chosen else {
+        // Nothing external is playing (only the wallpaper's own audio, if any).
+        *state.info.lock().unwrap() = None;
+        *state.art.lock().unwrap() = None;
+        *last_art_key = String::new();
         return Ok(());
     };
 
@@ -195,6 +221,9 @@ pub fn toggle_playback() -> bool {
         let sessions = mgr.GetSessions()?;
         for i in 0..sessions.Size()? as usize {
             let s = sessions.GetAt(i as u32)?;
+            if is_session_self(&s) {
+                continue;
+            }
             if status_of(&s) == "playing" {
                 chosen = Some(s);
                 break;
