@@ -26,7 +26,8 @@
         "minHeight": 560,
         "center": true,
         "resizable": true,
-        "visible": true
+        "visible": true,
+        "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       },
       {
         "label": "wallpaper",
@@ -54,7 +55,8 @@
         "focus": false,
         "alwaysOnTop": true,
         "width": 240,
-        "height": 44
+        "height": 44,
+        "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       },
       {
         "label": "clock",
@@ -68,7 +70,8 @@
         "focus": false,
         "alwaysOnTop": true,
         "width": 340,
-        "height": 210
+        "height": 210,
+        "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       },
       {
         "label": "todo",
@@ -82,7 +85,8 @@
         "focus": false,
         "alwaysOnTop": true,
         "width": 380,
-        "height": 520
+        "height": 520,
+        "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       },
       {
         "label": "start",
@@ -96,7 +100,8 @@
         "focus": false,
         "alwaysOnTop": true,
         "width": 560,
-        "height": 460
+        "height": 460,
+        "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       }
     ]
   },
