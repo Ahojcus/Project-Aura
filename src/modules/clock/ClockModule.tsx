@@ -30,6 +30,7 @@ export function ClockModule() {
   const clock = useSettings((s) => s.settings.clock);
   const draggable = useSettings((s) => s.settings.clock.win.draggable);
   const winStyle = useModuleWindow("clock");
+  const glass = clock.background ? "glass" : "no-bg";
   const [now, setNow] = useState(() => new Date());
 
   useEffect(() => {
@@ -63,7 +64,7 @@ export function ClockModule() {
       );
     };
     return (
-      <div className="widget glass" style={winStyle} {...(draggable ? { onPointerDown: dragHandle } : undefined)}>
+      <div className={`widget ${glass}`} style={winStyle} {...(draggable ? { onPointerDown: dragHandle } : undefined)}>
         <div className="clock-analog">
           <svg width="160" height="160" viewBox="0 0 160 160">
             <circle cx="80" cy="80" r="74" fill="none" stroke="var(--border-strong)" strokeWidth="2" />
@@ -92,7 +93,7 @@ export function ClockModule() {
 
   if (clock.layout === "minimal") {
     return (
-      <div className="widget glass" style={winStyle} {...(draggable ? { onPointerDown: dragHandle } : undefined)}>
+      <div className={`widget ${glass}`} style={winStyle} {...(draggable ? { onPointerDown: dragHandle } : undefined)}>
         <div className="clock-minimal">
           {time}
           {clock.format12h && <span style={{ marginLeft: 6, color: "var(--accent)", fontSize: 15 }}>{t.ampm}</span>}
@@ -103,7 +104,7 @@ export function ClockModule() {
   }
 
   return (
-    <div className="widget glass" style={winStyle} {...(draggable ? { onPointerDown: dragHandle } : undefined)}>
+    <div className={`widget glass ${glass}`} style={winStyle} {...(draggable ? { onPointerDown: dragHandle } : undefined)}>
       <div className="clock-digital">
         {time}
         {clock.format12h && <span className="ampm">{t.ampm}</span>}

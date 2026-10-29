@@ -1,19 +1,43 @@
 .widget {
   position: fixed;
-  inset: 6px;
+  /* 64px of transparent air around the glass — room for the drop shadow to
+     render INSIDE this window. Small insets clip the shadow at the native
+     window rectangle, which reads as a rectangular underglow even though the
+     widget itself is rounded. Window sizes + 2×64px keep the visible widget
+     at the same on-screen footprint as before. */
+  inset: 64px;
   display: flex;
   flex-direction: column;
   padding: 16px 18px;
   cursor: default;
   user-select: none;
-  /* Legibility over bright wallpapers: a soft ambient drop shadow */
+  /* Legibility over bright wallpapers: a soft ambient drop shadow
+     (extent 12 + 40 = 52px ≤ the 64px inset, so nothing is clipped). */
   box-shadow:
-    0 18px 48px color-mix(in srgb, #000 26%, transparent),
+    0 12px 40px color-mix(in srgb, #000 26%, transparent),
     0 2px 8px color-mix(in srgb, #000 12%, transparent);
+  /* One-shot entrance on boot/reveal — the widget drifts in instead of
+     popping. Only replays after display:none/window remount, never on
+     re-renders. */
+  animation: widget-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes widget-in {
+  from { opacity: 0; transform: translateY(12px) scale(0.995); }
 }
 
 .widget.drag-region {
   cursor: move;
+}
+
+/* Background off (Settings → module → Background): the glass card is removed
+   entirely so the content floats directly on the wallpaper. */
+.widget.no-bg {
+  background: transparent;
+  border-color: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
 }
 
 .clock-digital {
@@ -174,24 +198,100 @@
 .pill.due { color: var(--muted); }
 .todo-del {
   visibility: hidden;
-  background: none;
+  width: 20px;
+  height: 20px;
+  min-width: 20px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  background: transparent;
   border: none;
+  border-radius: 50%;
   color: var(--muted);
   cursor: pointer;
-  font-size: 14px;
-  padding: 0 2px;
+  font-size: 11px;
+  transition: background 0.15s ease, color 0.15s ease;
 }
 .todo-row:hover .todo-del { visibility: visible; }
+.todo-del:hover {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
 .todo-add {
   display: flex;
   gap: 6px;
   margin-top: 10px;
 }
-.todo-add input { flex: 1; min-width: 0; font-size: 12px; padding: 6px 8px; }
-.todo-add .mini {
-  font-size: 11px;
+.todo-add input {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
   padding: 6px 9px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel-solid) 65%, transparent);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
+/* the small category / priority / date controls */
+.todo-add select,
+.todo-add input[type="date"] {
+  font-size: 11px;
+  padding: 6px 7px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--panel-solid) 65%, transparent);
+  transition: border-color 0.15s ease, color 0.15s ease;
+  color: var(--text);
+}
+.todo-add select:hover,
+.todo-add input[type="date"]:hover { border-color: color-mix(in srgb, var(--accent) 55%, transparent); }
+.todo-add select { cursor: pointer; appearance: none; -webkit-appearance: none; padding-right: 6px; text-align: center; }
+
+/* round accent add button with a soft glow and springy press */
+.todo-add-btn {
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  padding: 0;
+  display: grid;
+  place-items: center;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--accent) 55%, transparent);
+  transition:
+    transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.2s ease,
+    filter 0.15s ease;
+}
+.todo-add-btn svg { width: 15px; height: 15px; }
+.todo-add-btn:hover {
+  transform: translateY(-1px) scale(1.07);
+  filter: brightness(1.1);
+  box-shadow: 0 6px 18px -4px color-mix(in srgb, var(--accent) 70%, transparent);
+}
+.todo-add-btn:active { transform: scale(0.9); }
+
+/* ghost pill for clearing finished tasks — turns red on hover */
+.todo-clear {
+  margin-top: 8px;
+  align-self: flex-start;
+  font-size: 11px;
+  font-weight: 550;
+  padding: 4px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.todo-clear:hover {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 50%, transparent);
+  background: color-mix(in srgb, var(--danger) 9%, transparent);
+}
+
 .todo-filters {
   display: flex;
   gap: 6px;
@@ -202,12 +302,18 @@
   padding: 3px 10px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: transparent;
+  background: color-mix(in srgb, var(--panel-solid) 55%, transparent);
+  color: var(--muted);
   cursor: pointer;
   transition: all 0.15s ease;
+}
+.chip:hover {
+  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
 }
 .chip.active {
   background: var(--accent);
   color: #fff;
   border-color: transparent;
+  box-shadow: 0 4px 12px -4px color-mix(in srgb, var(--accent) 55%, transparent);
 }

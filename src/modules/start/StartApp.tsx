@@ -224,10 +224,11 @@ function Launcher() {
 
   const pending = hasTauri() && scanning;
   const emptyWithNoData = !query && history.length === 0 && recentApps.length === 0;
+  const noBg = !useSettings((s) => s.settings.start.background);
 
   return (
     <div className="start-root">
-      <div className="start-card">
+      <div className={`start-card${noBg ? " no-bg" : ""}`}>
         <div className="start-inputrow">
           <span className="start-searchicon" aria-hidden>⌕</span>
           <input

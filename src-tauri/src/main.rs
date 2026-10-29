@@ -64,6 +64,7 @@ fn main() {
             commands::wallpaper_import,
             commands::wallpaper_delete_copy,
             commands::wallpaper_set_embedded,
+            commands::wallpaper_sync_displays,
             commands::toggle_media_playback,
             commands::get_media_info,
             commands::get_media_art,
@@ -74,6 +75,7 @@ fn main() {
             commands::notch_chime,
             commands::autostart_set,
             commands::autostart_is_enabled,
+            commands::app_shortcut_set,
             commands::get_monitors,
             commands::get_apps,
             commands::rescan_apps,
@@ -173,12 +175,20 @@ fn position_windows(app: &tauri::App) -> tauri::Result<()> {
             let _ = ww.set_ignore_cursor_events(true);
         }
         if let Some(wc) = app.get_webview_window("clock") {
-            let x = (w - 340.0 * scale - 48.0 * scale).max(0.0) as i32;
-            let _ = wc.set_position(tauri::PhysicalPosition::new(x, (40.0 * scale) as i32));
+            // Window is 340+2×64 logical wide with the glass inset 64px, so
+            // keep the VISIBLE widget 48px from the right / 40px from the top
+            // like the old geometry: widget right edge sits at 54px, i.e.
+            // x = w − 458 (54 margin + 340 glass + 64 pad), all × scale.
+            let x = (w - 458.0 * scale).max(0.0) as i32;
+            let y = ((46.0 - 64.0) * scale).max(0.0) as i32;
+            let _ = wc.set_position(tauri::PhysicalPosition::new(x, y));
         }
         if let Some(wt) = app.get_webview_window("todo") {
-            let y = (h - 520.0 * scale - 40.0 * scale).max(0.0) as i32;
-            let _ = wt.set_position(tauri::PhysicalPosition::new((40.0 * scale) as i32, y));
+            // Same idea, bottom-left: widget left margin 46px, bottom margin
+            // 46px, glass 520 logical tall, pad 64 → y = h − 630 × scale.
+            let x = ((46.0 - 64.0) * scale).max(0.0) as i32;
+            let y = (h - 630.0 * scale).max(0.0) as i32;
+            let _ = wt.set_position(tauri::PhysicalPosition::new(x, y));
         }
     }
     Ok(())

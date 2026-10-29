@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use serde::Serialize;
 use tauri::{AppHandle, Manager, State};
-use tauri_plugin_global_shortcut::ShortcutState;
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 #[cfg(windows)]
 use crate::wallpaper_win;
@@ -205,16 +205,16 @@ fn position_module_window(
     let pos = match label {
         "start" => {
             // Launcher palette: horizontally centered, ~1/3 from the top.
-            let ww = window.outer_size().map(|s| s.width as f64).unwrap_or(560.0 * scale);
-            let wh = window.outer_size().map(|s| s.height as f64).unwrap_or(460.0 * scale);
+            let ww = window.outer_size().map(|s| s.width as f64).unwrap_or(688.0 * scale);
+            let wh = window.outer_size().map(|s| s.height as f64).unwrap_or(588.0 * scale);
             (mx + ((w - ww) / 2.0).max(0.0), my + ((h - wh) * 0.30).max(0.0))
         }
         "notch" => {
             let notch_w = window.outer_size().map(|s| s.width as f64).unwrap_or(240.0);
             (mx + (w - notch_w) / 2.0, my)
         }
-        "clock" => (mx + (w - 340.0 * scale - 48.0 * scale), my + 40.0 * scale),
-        "todo" => (mx + 40.0 * scale, my + (h - 520.0 * scale - 40.0 * scale)),
+        "clock" => (mx + (w - 458.0 * scale).max(0.0), my + ((46.0 - 64.0) * scale).max(0.0)),
+        "todo" => (mx + ((46.0 - 64.0) * scale).max(0.0), my + (h - 630.0 * scale).max(0.0)),
         _ => return,
     };
     let _ = window.set_position(tauri::PhysicalPosition::new(
@@ -223,8 +223,11 @@ fn position_module_window(
     ));
 }
 
-/// Default logical window sizes used by the capacity multipliers.
-const DEFAULT_SIZES: &[(&str, f64, f64)] = &[("clock", 340.0, 210.0), ("todo", 380.0, 520.0)];
+/// Default logical window sizes used by the capacity multipliers. Glass
+/// widgets keep a 64px transparent inset for the drop shadow, so each entry
+/// is the old visible size + 2×64px (clock 340+128×210+128, todo 380+128×
+/// 520+128).
+const DEFAULT_SIZES: &[(&str, f64, f64)] = &[("clock", 468.0, 338.0), ("todo", 508.0, 648.0)];
 
 /// Apply per-module window configuration passed from the settings store:
 /// z-order level, manual coordinates, click-through and a capacity
@@ -244,7 +247,11 @@ pub fn window_apply(
     let Some(w) = app.get_webview_window(&label) else { return };
 
     if let Some(l) = level {
-        apply_level(&app, &w, &l);
+        // The wallpaper (main + per-display extras) is always forced to the
+        // very bottom (embedded behind the desktop icons), whatever layer the
+        // stored configuration says — apps must never end up behind it.
+        let forced = label == "wallpaper" || label.starts_with("wallpaper_");
+        apply_level(&app, &w, if forced { "bottommost" } else { &l });
     }
     if let (Some(x), Some(y)) = (x, y) {
         if let Some(mon) = resolve_monitor(&app, monitor) {
@@ -256,7 +263,7 @@ pub fn window_apply(
             ));
         }
     }
-    if label == "wallpaper" {
+    if label == "wallpaper" || label.starts_with("wallpaper_") {
         // The wallpaper is never interactive — a wallpaper that takes mouse
         // input can be clicked or dragged, and a dragged/moved wallpaper pops
         // out of its z-order slot and covers the windows underneath. Ignore
@@ -277,16 +284,26 @@ pub fn window_apply(
     }
 }
 
+/// True when `window` is the main wallpaper or a per-display wallpaper extra.
+fn is_wallpaper_window(app: &AppHandle, window: &tauri::WebviewWindow) -> bool {
+    if app.get_webview_window("wallpaper").as_ref() == Some(window) {
+        return true;
+    }
+    app.webview_windows()
+        .iter()
+        .any(|(l, w)| l.starts_with("wallpaper_") && w == window)
+}
+
 fn apply_level(app: &AppHandle, window: &tauri::WebviewWindow, level: &str) {
     match level {
         "topmost" => {
-            if app.get_webview_window("wallpaper").as_ref() == Some(window) {
+            if is_wallpaper_window(app, window) {
                 let _ = wallpaper_embed(app, false);
             }
             let _ = window.set_always_on_top(true);
         }
         "normal" => {
-            let is_wallpaper = app.get_webview_window("wallpaper").as_ref() == Some(window);
+            let is_wallpaper = is_wallpaper_window(app, window);
             if is_wallpaper {
                 let _ = wallpaper_embed(app, false);
             }
@@ -305,9 +322,10 @@ fn apply_level(app: &AppHandle, window: &tauri::WebviewWindow, level: &str) {
             // The wallpaper is special-cased: embedding behind the desktop
             // icons is its true bottommost. Other modules pin to the bottom of
             // the window stack.
-            if app.get_webview_window("wallpaper").as_ref() == Some(window) {
+            if is_wallpaper_window(app, window) {
                 let _ = window.set_always_on_top(false);
-                let _ = wallpaper_embed(app, true);
+                let label = window.label().to_string();
+                let _ = wallpaper_embed_label(app, &label, true);
                 return;
             }
             #[cfg(windows)]
@@ -375,6 +393,13 @@ pub fn notch_apply_layout(
     // reports it so the window grows to fit all enabled widgets instead of a
     // fixed 330px that clipped/overlapped when everything was enabled.
     content_height: Option<f64>,
+    // Measured width of the collapsed pill's visible content (logical px).
+    // While collapsed the icon row hides, so the window shrinks to the small
+    // utility pill in any layout; null keeps the full-bar width.
+    collapsed_width: Option<f64>,
+    // Rolling-out tween step: outright width override the frontend animates
+    // through (the final frame of a tween omits it for exact geometry).
+    fit_width: Option<f64>,
 ) {
     let Some(w) = app.get_webview_window("notch") else { return };
     let Some(monitor) = resolve_monitor(&app, monitor) else { return };
@@ -386,16 +411,29 @@ pub fn notch_apply_layout(
     let thickness = thickness.clamp(30.0, 96.0);
     // The bar strip is always as wide as the panel it opens (the icon tabs +
     // status chips don't fit a narrower pill), so both states share a width.
-    let width = if is_bar {
+    let full_width = if is_bar {
         sw * (length / 100.0).clamp(0.25, 1.0)
     } else {
         660.0f64.max(length.clamp(160.0, sw * 0.8))
     };
+    // Collapsed (any layout): shrink to the measured compact pill. Expanded,
+    // or no measurement yet: full width.
+    let mut width = if !expanded {
+        collapsed_width
+            .map(|w| w.max(150.0).min(sw * 0.9))
+            .unwrap_or(full_width)
+    } else {
+        full_width
+    };
+    // Tween frames override the width outright; safe clamps on both ends.
+    if let Some(over) = fit_width {
+        width = over.max(150.0).min(sw * 0.9);
+    }
     let (width, height) = if expanded {
         let content = content_height.unwrap_or(286.0).max(140.0);
         // Bar strip (thickness) + measured panel content, never taller than
-        // 85% of the screen so widgets stay reachable.
-        (width.round(), (thickness + content).min(sh * 0.85).round())
+        // 92% of the screen so widgets stay reachable.
+        (width.round(), (thickness + content).min(sh * 0.92).round())
     } else {
         (width.round(), thickness)
     };
@@ -511,7 +549,12 @@ pub fn notch_chime() {
 // ---------------------------------------------------------------------------
 
 pub fn wallpaper_embed(app: &AppHandle, embed: bool) -> bool {
-    let Some(w) = app.get_webview_window("wallpaper") else {
+    wallpaper_embed_label(app, "wallpaper", embed)
+}
+
+/// Embed/unembed any wallpaper-suffix window (main + per-display extras).
+pub fn wallpaper_embed_label(app: &AppHandle, label: &str, embed: bool) -> bool {
+    let Some(w) = app.get_webview_window(label) else {
         return false;
     };
     let Some(hwnd) = hwnd_of(&w) else { return false };
@@ -549,6 +592,106 @@ fn hwnd_of(_window: &tauri::WebviewWindow) -> Option<()> {
 #[tauri::command]
 pub fn wallpaper_set_embedded(app: AppHandle, embed: bool) -> bool {
     wallpaper_embed(&app, embed)
+}
+
+// ---------------------------------------------------------------------------
+// Per-display wallpapers — one extra wallpaper webview per non-main display
+// ---------------------------------------------------------------------------
+
+/// Window label of a per-display wallpaper with the given global origin.
+fn wallpaper_display_label(x: i32, y: i32) -> String {
+    format!("wallpaper_{}_{}", x, y)
+}
+
+/// Make sure every connected display except the main wallpaper's display has
+/// its own wallpaper window, sized to that display and embedded behind the
+/// desktop icons — so each screen can show a different wallpaper.
+///
+/// Called by the main wallpaper page whenever the module is enabled or the
+/// per-display assignment changes. `visible = false` hides every extra.
+#[tauri::command]
+pub fn wallpaper_sync_displays(app: AppHandle, visible: bool, main_monitor: Option<(i32, i32)>) {
+    let main_origin = resolve_monitor(&app, main_monitor).map(|m| (m.position().x, m.position().y));
+    // One entry per display the main window does NOT already fill.
+    let extras: Vec<(i32, i32, u32, u32)> = enumerate_monitors(&app)
+        .into_iter()
+        .filter(|m| Some((m.x, m.y)) != main_origin)
+        .map(|m| (m.x, m.y, m.width, m.height))
+        .collect();
+    let wanted: Vec<String> = extras
+        .iter()
+        .map(|(x, y, _, _)| wallpaper_display_label(*x, *y))
+        .collect();
+
+    // Tear down extras whose display has moved away or gone missing.
+    let stale: Vec<tauri::WebviewWindow> = app
+        .webview_windows()
+        .into_iter()
+        .filter(|(label, _)| label.starts_with("wallpaper_") && !wanted.contains(label))
+        .map(|(_, w)| w)
+        .collect();
+    for w in stale {
+        let _ = w.close();
+    }
+
+    if visible {
+        let app2 = app.clone();
+        let extras = extras.clone();
+        let _ = app.run_on_main_thread(move || {
+            for (x, y, w, h) in extras.clone() {
+                let label = wallpaper_display_label(x, y);
+                if app2.get_webview_window(&label).is_some() {
+                    continue;
+                }
+                let builder = tauri::WebviewWindowBuilder::new(
+                    &app2,
+                    &label,
+                    tauri::WebviewUrl::App("wallpaper.html".into()),
+                )
+                .visible(false)
+                .decorations(false)
+                .transparent(true)
+                .skip_taskbar(true)
+                .resizable(false)
+                .shadow(false)
+                .focused(false)
+                .additional_browser_args(
+                    "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows",
+                );
+                if let Ok(win) = builder.build() {
+                    let _ = win.set_size(tauri::PhysicalSize::new(w.max(1), h.max(1)));
+                    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                    // The wallpaper never takes mouse input or focus.
+                    let _ = win.set_ignore_cursor_events(true);
+                    let _ = win.set_focusable(false);
+                }
+            }
+            // Give fresh windows a beat to load, then show + embed them all.
+            let handle = app2.clone();
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+                for (x, y, w, h) in extras {
+                    let label = wallpaper_display_label(x, y);
+                    if let Some(win) = handle.get_webview_window(&label) {
+                        let _ = win.set_size(tauri::PhysicalSize::new(w.max(1), h.max(1)));
+                        let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
+                        let _ = win.show();
+                        if !wallpaper_embed_label(&handle, &label, true) {
+                            // Fallback: keep it as a normal skipped-taskbar window.
+                            let _ = win.show();
+                        }
+                    }
+                }
+            });
+        });
+    } else {
+        for label in wanted {
+            if let Some(win) = app.get_webview_window(&label) {
+                let _ = wallpaper_embed_label(&app, &label, false);
+                let _ = win.hide();
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -675,14 +818,71 @@ pub fn autostart_is_enabled(app: AppHandle) -> bool {
     app.autolaunch().is_enabled().unwrap_or(false)
 }
 
+/// Hotkeys that open the settings panel, registered statically at boot.
+/// `app_shortcut_set` tears these down / re-registers them based on the
+/// user's Global-shortcut configuration.
+const SETTINGS_DEFAULT_COMBOS: [&str; 3] = ["ctrl+shift+,", "ctrl+shift+=", "ctrl+shift+numpadplus"];
+
+/// The user's custom settings hotkey, as currently registered system-wide.
+/// `None` = the defaults above are the active settings hotkeys.
+static CUSTOM_COMBO: Mutex<Option<String>> = Mutex::new(None);
+
 pub fn on_global_shortcut(app: &AppHandle, shortcut: &str, state: ShortcutState) {
     if state == ShortcutState::Pressed {
-        if shortcut.to_lowercase().contains("alt") {
+        // Route by exact match so a custom, alt-based settings combo
+        // (e.g. alt+s) doesn't fall into the launcher branch.
+        if shortcut.eq_ignore_ascii_case("alt+space") {
             toggle_start(app.clone());
         } else {
             show_settings(app);
         }
     }
+}
+
+/// Apply the user's "open settings" hotkey configuration from Settings:
+/// `enabled=false` unregisters every settings hotkey system-wide;
+/// `combo` empty keeps the builtin defaults, a non-empty value registers
+/// exactly one user-chosen combination instead. Called by the settings
+/// webview on boot and whenever the config changes.
+#[tauri::command]
+pub fn app_shortcut_set(app: AppHandle, enabled: bool, combo: Option<String>) -> Result<(), String> {
+    let gs = app.global_shortcut();
+
+    // Tear down everything we may have registered before (ignore failures —
+    // unregistering something that isn't registered is not an error for us).
+    for s in SETTINGS_DEFAULT_COMBOS {
+        let _ = gs.unregister(s);
+    }
+    if let Ok(mut prev) = CUSTOM_COMBO.lock() {
+        if let Some(old) = prev.take() {
+            if let Ok(sc) = old.parse::<Shortcut>() {
+                let _ = gs.unregister(sc);
+            }
+        }
+    }
+
+    if enabled {
+        let user = combo
+            .as_deref()
+            .map(str::trim)
+            .filter(|c| !c.is_empty());
+        if let Some(c) = user {
+            let sc: Shortcut = c
+                .parse()
+                .map_err(|e| format!("'{c}' is not a valid shortcut ({e:?}). Include at least one modifier, e.g. Ctrl/Alt/Shift."))?;
+            gs.register(sc)
+                .map_err(|e| format!("Could not register {c}: {e:?}"))?;
+            if let Ok(mut slot) = CUSTOM_COMBO.lock() {
+                *slot = Some(c.to_string());
+            }
+        } else {
+            for s in SETTINGS_DEFAULT_COMBOS {
+                gs.register(s).
+                    map_err(|e| format!("Could not register {s}: {e:?}"))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Whether the Start launcher module is enabled (mirrors `modules.start` on the

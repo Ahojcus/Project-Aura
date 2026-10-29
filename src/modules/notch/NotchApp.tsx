@@ -40,11 +40,27 @@ interface AppInfo {
 
 interface TimerState {
   running: boolean;
+  /** Full duration of the current session — drives the progress ring. */
   totalMs: number;
+  /** Remaining time when paused (while running, derive from endAt). */
   leftMs: number;
+  /** Absolute wall-clock deadline while running. Deriving from a timestamp
+   *  instead of decrementing per tick keeps the countdown accurate even when
+   *  the hidden notch webview throttles its timers to ~1s. */
+  endAt: number | null;
+  /** Session completed — ring full, "Done ✓". Cleared by the next start,
+   *  reset, preset press or the auto-dismiss timer in the finish effect. */
+  finished: boolean;
 }
 
 const TIMER_PRESETS = [5, 15, 25, 50];
+
+function fmtDone(ts: number): string {
+  const d = new Date(ts);
+  const h = d.getHours() % 12 || 12;
+  const ampm = d.getHours() >= 12 ? "PM" : "AM";
+  return `${h}:${String(d.getMinutes()).padStart(2, "0")} ${ampm}`;
+}
 
 function fmtRate(bps: number): string {
   if (bps <= 0) return "0";
@@ -153,6 +169,9 @@ const TAB_ICONS: Record<TabKey, () => ReactNode> = {
   shortcuts: ShortcutsIcon,
 };
 
+/** Openable panels: the individual widget tabs + the default Home dashboard. */
+type PanelKey = TabKey | "home";
+
 export function NotchApp() {
   const notch = useSettings((s) => s.settings.notch);
   const clockFmt12h = useSettings((s) => s.settings.clock.format12h);
@@ -165,9 +184,9 @@ export function NotchApp() {
   const [appsBump, setAppsBump] = useState(0);
   // Click-driven UX: activeTab = which panel is open (CSS reveal), and the
   // window geometry flips *after* the fade-out so closing looks smooth.
-  const [activeTab, setActiveTab] = useState<TabKey | null>(null);
+  const [activeTab, setActiveTab] = useState<PanelKey | null>(null);
   const [windowExpanded, setWindowExpanded] = useState(false);
-  const [timer, setTimer] = useState<TimerState>({ running: false, totalMs: 0, leftMs: 0 });
+  const [timer, setTimer] = useState<TimerState>({ running: false, totalMs: 0, leftMs: 0, endAt: null, finished: false });
   const artKey = useRef("");
   const expanded = activeTab !== null;
 
@@ -276,7 +295,10 @@ export function NotchApp() {
     const id = window.setTimeout(() => {
       raf = requestAnimationFrame(() => {
         const h = expandedRef.current?.scrollHeight ?? 0;
-        if (h > 0) setContentH(Math.ceil(h) + 6);
+        // +12 slack: Windows fractional display scales round the native
+        // webview's physical height, which can eat a few px — too little
+        // slack and a scrollbar appears for content that actually fits.
+        if (h > 0) setContentH(Math.ceil(h) + 12);
       });
     }, 60); // let panel content settle after toggles
     return () => {
@@ -296,7 +318,7 @@ export function NotchApp() {
     const tick = () => {
       const h = expandedRef.current?.scrollHeight ?? 0;
       if (h > 0) {
-        const next = Math.ceil(h) + 6;
+        const next = Math.ceil(h) + 12;
         setContentH((prev) => (Math.abs(next - prev) > 1 ? next : prev));
       }
       raf = requestAnimationFrame(tick);
@@ -305,9 +327,75 @@ export function NotchApp() {
     return () => cancelAnimationFrame(raf);
   }, [expanded]);
 
+  // Compact idle width: while collapsed, the icon row + window buttons hide
+  // (CSS .idle) in any layout, so the strip shrinks to what's left —
+  // dot · clock · mini bars. The native window follows this measurement.
+  // NOTE: deliberately keyed WITHOUT the network-rate value — `.net-chip`
+  // reserves a constant width (see notch.css), so throughput samples must
+  // never re-measure/re-fit the window or the pill would drift sideways
+  // every second while speeds change.
+  const collapsedRef = useRef<HTMLDivElement | null>(null);
+  const [idleW, setIdleW] = useState<number | null>(null);
+  // Any collapsed-pill content change alters the idle width → re-measure.
+  // (The network VALUE stays out on purpose — see the .net-chip comment.)
+  const collapsedKey = [
+    notch.collapsed.showName,
+    notch.collapsed.showClock,
+    notch.collapsed.showTimer,
+    notch.collapsed.showMem,
+    notch.collapsed.showNet,
+    notch.collapsed.showMedia,
+  ]
+    .map(Number)
+    .join("");
+  const idleMeasureKey = `${widgetsKey}|${collapsedKey}|${notch.layout}|${timer.running}|${timer.finished}`;
+  useEffect(() => {
+    if (windowExpanded) return;
+    const id = window.requestAnimationFrame(() => {
+      // Sum the VISIBLE children + gaps + padding — never the bar's own
+      // scrollWidth, which always spans the window and would feed the
+      // measured width back into the width, growing the notch forever.
+      const el = collapsedRef.current;
+      if (!el) return;
+      const cs = getComputedStyle(el);
+      const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0);
+      const gap = parseFloat(cs.gap) || 0;
+      const visible = Array.from(el.children).filter(
+        (c) => c instanceof HTMLElement && getComputedStyle(c as HTMLElement).display !== "none",
+      );
+      const kids = visible.reduce((s, c) => s + (c as HTMLElement).getBoundingClientRect().width, 0);
+      const content = pad + kids + gap * Math.max(0, visible.length - 1);
+      if (content > 60) {
+        setIdleW((prev) => {
+          const next = Math.min(Math.ceil(content) + 12, 660);
+          return Math.abs(next - (prev ?? 0)) > 3 ? next : prev;
+        });
+      }
+    });
+    return () => window.cancelAnimationFrame(id);
+  }, [idleMeasureKey, windowExpanded]);
+
+  // Roll-out tween: the native window glides between the compact idle pill
+  // and the full bar over 1.2 s — both on hover (idle → full) and unhover
+  // (full → idle). Each step passes a fit_width override; the final call
+  // without one lands the exact Rust-computed geometry.
+  const tweenRaf = useRef(0);
+  const lastTweenState = useRef(windowExpanded);
+  // Latest layout args (see comment at the top of the tween effect).
+  const layoutArgsRef = useRef({
+    layout: "notch" as string,
+    placement: "top-center" as string,
+    length: 240,
+    thickness: 44,
+    expanded: false,
+    monitor: null as number[] | null,
+    contentHeight: 0,
+    collapsedWidth: null as number | null,
+  });
   useEffect(() => {
     if (!hasTauri()) return;
-    void invoke("notch_apply_layout", {
+
+    const baseArgs = {
       layout: notch.layout,
       placement: notch.placement,
       length: notch.length,
@@ -315,44 +403,171 @@ export function NotchApp() {
       expanded: windowExpanded,
       monitor: monitorArg,
       contentHeight: contentH,
-    });
-    // Manual coordinates (win.x/y) override the engine's anchor placement.
+      collapsedWidth: idleW,
+    };
+    // LIVE snapshot: closure args freeze at effect-creation time, but the
+    // panel height measurement often commits *while* the 1.2 s roll-out
+    // tween is still running. The in-flight guard drops the mid-tween
+    // invoke (correctly), so the final "exact geometry" invoke MUST read the
+    // freshest values — otherwise a stale height wins and the panel scrolls
+    // forever. Every invoke below goes through this ref.
+    layoutArgsRef.current = baseArgs;
+    // Manual coordinates run without tweens: window_apply pins the spot.
     if (winConf.x != null && winConf.y != null) {
+      window.cancelAnimationFrame(tweenRaf.current);
+      tweenRaf.current = 0;
+      void invoke("notch_apply_layout", layoutArgsRef.current);
       void invoke("window_apply", { label: "notch", x: winConf.x, y: winConf.y, monitor: monitorArg });
+      return;
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [layoutKey, windowExpanded, contentH, winConf.x, winConf.y, winConf.monitor?.x, winConf.monitor?.y]);
+
+    // Only a real open/close transition (re)starts the tween. A rerun from
+    // some other dep (content height settling, idle re-measure, layout
+    // change) must NOT cancel an in-flight tween and snap the width — that
+    // was cutting the roll-out leg short.
+    if (windowExpanded === lastTweenState.current) {
+      if (tweenRaf.current) return; // tween in flight — final frame covers it
+      void invoke("notch_apply_layout", layoutArgsRef.current);
+      return;
+    }
+    lastTweenState.current = windowExpanded;
+    window.cancelAnimationFrame(tweenRaf.current);
+
+    // Mirror of the Rust width clamps (keep in sync with commands.rs).
+    const sw = window.screen?.width ?? 1920;
+    const fullWidth =
+      notch.layout === "bar"
+        ? sw * Math.min(1, Math.max(0.25, notch.length / 100))
+        : Math.max(660, Math.min(sw * 0.8, Math.max(160, notch.length)));
+
+    if (idleW == null) {
+      void invoke("notch_apply_layout", baseArgs);
+      return;
+    }
+    // 1.2 s both ways (scaled by the Settings animation speed multiplier).
+    const ms = Math.max(120, Math.round(1200 / Math.max(0.2, notch.animation.speed)));
+    const from = windowExpanded ? idleW : fullWidth;
+    const to = windowExpanded ? fullWidth : idleW;
+    const t0 = performance.now();
+    // Compositor budget: each step of this tween is an IPC invoke + a NATIVE
+    // window resize, which re-lays-out the webview. Uncapped rAF on a 144Hz+
+    // display more than doubles those calls for zero visible gain and makes
+    // the motion stutter — so cap at ~60 steps/s and skip sub-pixel steps.
+    const STEP_MS = 1000 / 60;
+    let lastStep = t0 - STEP_MS; // nothing sent yet — the first frame always goes
+    let lastSent = Math.round(from);
+    // Direction-aware curves. Open: out-back (s=0.75 ⇒ ~3% overshoot) — the
+    // window bursts wide fast and settles with a springy kiss. Close:
+    // smoothstep — starts calm so the fade-out has time to read before the
+    // window rolls back, ends calm so it never slams shut.
+    const outBack = (k: number) => {
+      const s = 0.75;
+      const p = k - 1;
+      return 1 + (s + 1) * p * p * p + s * p * p;
+    };
+    const smoothStep = (k: number) => k * k * (3 - 2 * k);
+    const frame = (t: number) => {
+      if (t - lastStep < STEP_MS) {
+        tweenRaf.current = window.requestAnimationFrame(frame);
+        return;
+      }
+      lastStep = t;
+      const k = Math.min(1, (t - t0) / ms);
+      const eased = windowExpanded ? outBack(k) : smoothStep(k);
+      const now = Math.round(from + (to - from) * eased);
+      if (k >= 1 || now !== lastSent) {
+        lastSent = now;
+        void invoke("notch_apply_layout", { ...layoutArgsRef.current, fitWidth: now });
+      }
+      if (k < 1) {
+        tweenRaf.current = window.requestAnimationFrame(frame);
+      } else {
+        tweenRaf.current = 0;
+        void invoke("notch_apply_layout", layoutArgsRef.current); // exact final geometry, LATEST values
+        // Mid-tween frames measure the panel at a narrower, wrapped width,
+        // which can leave contentH too tall — or the loop paused. One settled
+        // re-measure at the final (unwrapped) width pins the exact height.
+        window.setTimeout(() => {
+          const h = expandedRef.current?.scrollHeight ?? 0;
+          if (h > 0) {
+            const next = Math.ceil(h) + 12;
+            setContentH((prev) => (Math.abs(next - prev) > 1 ? next : prev));
+          }
+        }, 90);
+      }
+    };
+    tweenRaf.current = window.requestAnimationFrame(frame);
+  }, [layoutKey, windowExpanded, contentH, idleW, winConf.x, winConf.y, winConf.monitor?.x, winConf.monitor?.y]);
 
   // -------------------------------------------------------------- focus timer
+  // Ticks 4×/s reading the ABSOLUTE deadline (timer.endAt) — not subtracting
+  // from itself — so throttled/missed ticks can never accumulate drift.
   useEffect(() => {
-    if (!timer.running) return;
-    const id = window.setInterval(() => {
-      setTimer((t) => {
-        if (!t.running) return t;
-        const left = t.leftMs - 250;
-        if (left <= 0) {
-          if (hasTauri()) void invoke("notch_chime");
-          return { running: false, totalMs: 0, leftMs: 0 };
-        }
-        return { ...t, leftMs: left };
-      });
-    }, 250);
+    if (!timer.running || timer.endAt == null) return;
+    const tick = () => {
+      const left = (timer.endAt as number) - Date.now();
+      if (left <= 0) {
+        if (hasTauri()) void invoke("notch_chime");
+        setTimer((t) => (t.running ? { ...t, running: false, leftMs: 0, endAt: null, finished: true } : t));
+      } else {
+        setTimer((t) => (t.running ? { ...t, leftMs: left } : t));
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
     return () => window.clearInterval(id);
-  }, [timer.running]);
+  }, [timer.running, timer.endAt]);
 
-  const startTimer = (minutes: number) => setTimer({ running: true, totalMs: minutes * 60_000, leftMs: minutes * 60_000 });
-  const toggleTimer = () => setTimer((t) => ({ ...t, running: !t.running }));
-  const resetTimer = () => setTimer({ running: false, totalMs: 0, leftMs: 0 });
+  // Only ONE finish effect instance may chime/flip to Done even across
+  // re-renders; the interval above owns that transition, this one just adds
+  // the cleanup: a finished session auto-dismisses to "Ready" after 90s.
+  useEffect(() => {
+    if (!timer.finished) return;
+    const id = window.setTimeout(() => setTimer({ running: false, totalMs: 0, leftMs: 0, endAt: null, finished: false }), 90_000);
+    return () => window.clearTimeout(id);
+  }, [timer.finished]);
+
+  const startTimer = (minutes: number) =>
+    setTimer({ running: true, totalMs: minutes * 60_000, leftMs: minutes * 60_000, endAt: Date.now() + minutes * 60_000, finished: false });
+  const toggleTimer = () =>
+    setTimer((t) => {
+      if (t.finished || t.totalMs === 0) return t; // nothing to pause/resume
+      if (t.running && t.endAt != null) {
+        // Pause: freeze the remaining time from the absolute deadline.
+        const left = Math.max(0, t.endAt - Date.now());
+        return { ...t, running: false, leftMs: left, endAt: null, finished: false };
+      }
+      // Resume from the stored remainder.
+      return { ...t, running: true, endAt: Date.now() + t.leftMs, finished: false };
+    });
+  const resetTimer = () => setTimer({ running: false, totalMs: 0, leftMs: 0, endAt: null, finished: false });
+  /** Extend the running (or paused) session by n minutes without restarting. */
+  const extendTimer = (minutes: number) =>
+    setTimer((t) => {
+      if (t.finished || t.totalMs === 0) return t;
+      const add = minutes * 60_000;
+      if (t.running && t.endAt != null) {
+        return { ...t, totalMs: t.totalMs + add, leftMs: t.leftMs + add, endAt: t.endAt + add };
+      }
+      return { ...t, totalMs: t.totalMs + add, leftMs: t.leftMs + add, finished: false };
+    });
 
   // ------------------------------------------------------- open/close timing
   const shrinkTimer = useRef(0);
+  const enterTimer = useRef(0);
   const leaveTimer = useRef(0);
   const openedAt = useRef(0);
+  /** Pin toggle: while pinned, the panel ignores hover-out and stays open. */
+  const [pinned, setPinned] = useState(false);
+  /** Last known pointer position inside the webview (enter/leave events). */
+  const mousePos = useRef({ x: -1, y: -1 });
 
   /** Close: fade the panel out first, then snap the window back. */
   const closePanel = () => {
     window.clearTimeout(shrinkTimer.current);
     window.clearTimeout(leaveTimer.current);
+    window.clearTimeout(enterTimer.current);
+    setPinned(false); // a real close un-pins; reopening starts auto-close
     setActiveTab(null);
     shrinkTimer.current = window.setTimeout(
       () => setWindowExpanded(false),
@@ -360,15 +575,46 @@ export function NotchApp() {
     );
   };
 
-  /** Toggle a tab: clicking the same icon closes the panel. */
-  const toggleTab = (key: TabKey) => {
+  /**
+   * Open after hesitating over the bar — a passing cursor doesn't expand it.
+   * Hover rolls out the Home dashboard, and the FIRST tab icon is the
+   * dashboard's toggle: clicking it re-opens (or toggles) that same view.
+   * The other icons switch to their individual panels from there.
+   */
+  const onMouseEnter = (e: ReactMouseEvent) => {
+    mousePos.current = { x: e.clientX, y: e.clientY };
     window.clearTimeout(leaveTimer.current);
-    if (key === activeTab) {
+    if (activeTab !== null) return;
+    window.clearTimeout(enterTimer.current);
+    enterTimer.current = window.setTimeout(() => {
+      if (document.elementFromPoint(mousePos.current.x, mousePos.current.y) === null) return;
+      if (!anyWidget) return;
+      window.clearTimeout(shrinkTimer.current);
+      setActiveTab("home");
+      setWindowExpanded(true);
+      // Opening resizes the window under the cursor, which can fire a spurious
+      // mouseleave; forgive leaves during this settle window.
+      openedAt.current = Date.now();
+    }, 100);
+  };
+
+  /**
+   * Toggle a tab: clicking the open tab's icon closes the panel. The FIRST
+   * enabled tab doubles as the Home dashboard toggle (same view hover shows),
+   * so it closes while Home is open and switches back to it from any panel.
+   */
+  const toggleTab = (key: TabKey) => {
+    window.clearTimeout(enterTimer.current);
+    window.clearTimeout(leaveTimer.current);
+    const first = TAB_KEYS.find((k) => notch.widgets[k]);
+    const isDashboardToggle = key === first;
+    const opens = isDashboardToggle ? "home" : key;
+    if (opens === activeTab) {
       closePanel();
       return;
     }
     window.clearTimeout(shrinkTimer.current);
-    setActiveTab(key);
+    setActiveTab(opens);
     setWindowExpanded(true);
     // Opening resizes the window under the cursor, which can fire a spurious
     // mouseleave; forgive leaves during this settle window.
@@ -396,16 +642,24 @@ export function NotchApp() {
    * is still an element under it the pointer never actually left.
    */
   const onMouseLeave = (e: ReactMouseEvent) => {
-    if (Date.now() - openedAt.current < 350) return; // settling after open
+    window.clearTimeout(enterTimer.current);
+    // Pinned panels ignore hover-out entirely — that's the point of the pin.
+    if (pinned) return;
     const px = e.clientX;
     const py = e.clientY;
     window.clearTimeout(leaveTimer.current);
+    // Every scheduled close is verified: if the pointer actually left the
+    // webview, the hit-test at the recorded point comes back empty and the
+    // panel closes; a spurious mouseleave (window resizing under a stationary
+    // cursor at open) finds the pill there and is forgiven. That verification
+    // replaced an earlier "ignore leaves for 350 ms" guard, which wrongly
+    // swallowed a REAL quick leave right after hover-open and left the panel
+    // stuck open until the next enter.
     leaveTimer.current = window.setTimeout(() => {
       const hit = document.elementFromPoint(px, py);
       if (!hit) closePanel(); // pointer is genuinely outside the webview
     }, notch.animation.closeDelay);
   };
-  const onMouseEnter = () => window.clearTimeout(leaveTimer.current);
 
   const anyWidget = TAB_KEYS.some((k) => notch.widgets[k]);
 
@@ -425,6 +679,7 @@ export function NotchApp() {
     "notch-pill",
     expanded ? "open" : "",
     notch.appearance.ambientArt ? "" : "no-ambient",
+    notch.background ? "" : "no-bg",
   ]
     .filter(Boolean)
     .join(" ");
@@ -433,7 +688,7 @@ export function NotchApp() {
 
   return (
     <div
-      className={`notch-root${notch.layout === "bar" ? " bar" : ""}${notch.placement.startsWith("bottom") ? " bottom" : ""}`}
+      className={`notch-root${notch.layout === "bar" ? " bar" : ""}${notch.placement.startsWith("bottom") ? " bottom" : ""}${windowExpanded ? "" : " idle"}`}
       style={customVars}
     >      <div
         className={pillClasses}
@@ -444,18 +699,18 @@ export function NotchApp() {
            Background effect); sits behind bar + panel, freezes while idle for
            the music-reactive scenes. */}
         <NotchFxBackdrop fx={notch.fx} playing={media?.status === "playing"} />
-        <div className="notch-collapsed"
+        <div className="notch-collapsed" ref={collapsedRef}
           {...(winConf.draggable ? { onPointerDown: dragHandle } : undefined)}
         >
           <span className="notch-tabs">
             {!anyWidget && <span className="notch-small nb-hint">No widgets enabled — set them up in Settings</span>}
-            {tabs.map((key) => (
+            {tabs.map((key, i) => (
               <button
                 key={key}
-                className={`ntab${activeTab === key ? " active" : ""}`}
-                title={TAB_TITLES[key]}
-                aria-label={TAB_TITLES[key]}
-                aria-pressed={activeTab === key}
+                className={`ntab${activeTab === (i === 0 ? "home" : key) ? " active" : ""}`}
+                title={i === 0 ? "Dashboard — the default roll-out view" : TAB_TITLES[key]}
+                aria-label={i === 0 ? "Dashboard" : TAB_TITLES[key]}
+                aria-pressed={activeTab === (i === 0 ? "home" : key)}
                 onClick={() => toggleTab(key)}
               >
                 {TAB_ICONS[key]()}
@@ -468,21 +723,26 @@ export function NotchApp() {
             title={winConf.draggable ? "Drag to move the notch" : "Status"}
           />
 
+          {/* Minimized-pill content — each live indicator is gated by its own
+              notch.collapsed.* flag (independent of the expanded panel's
+              widget tabs) so the pill can differ from the hover panel. */}
           <span className="notch-status" onPointerDown={(e) => e.stopPropagation()}>
-            {notch.widgets.timer && timer.running && (
-              <span className="notch-mini-timer">⏱ {fmtTime(timer.leftMs)}</span>
+            {notch.collapsed.showTimer && (timer.running || timer.finished) && (
+              <span className={`notch-mini-timer${timer.finished ? " done" : timer.running ? "" : " paused"}`} title={timer.finished ? "Focus session done" : timer.running ? "Focus timer running" : "Focus timer paused"}>
+                {timer.finished ? "⏱ done ✓" : `⏱ ${fmtTime(timer.leftMs)}`}
+              </span>
             )}
-            {notch.widgets.monitors && sys && (
+            {notch.collapsed.showMem && sys && (
               <span className="nst-chip" title="Memory usage">
                 {sys.memTotalGb > 0 ? `${Math.round((sys.memUsedGb / sys.memTotalGb) * 100)}%` : `${sys.memUsedGb.toFixed(0)}GB`}
               </span>
             )}
-            {notch.widgets.monitors && sys && (
-              <span className="nst-chip" title="Network down / up">
+            {notch.collapsed.showNet && sys && (
+              <span className="nst-chip net-chip" title="Network down / up">
                 ↓{fmtRate(sys.netDownBps)}
               </span>
             )}
-            {notch.widgets.media && media && (
+            {notch.collapsed.showMedia && media && (
               media.durationMs > 0 ? (
                 /* real song progress — advances with the track (Windows SMTC
                    carries no audio spectrum, so bars can't "dance" to music) */
@@ -515,6 +775,35 @@ export function NotchApp() {
             </button>
             {expanded && (
               <button
+                className={`nst-btn${pinned ? " pinned" : ""}`}
+                title={pinned ? "Unpin — close again when the cursor leaves" : "Pin — keep the panel open"}
+                aria-label={pinned ? "Unpin panel" : "Pin panel"}
+                aria-pressed={pinned}
+                onClick={() => {
+                  const next = !pinned;
+                  setPinned(next);
+                  window.clearTimeout(leaveTimer.current);
+                  // Unpinning while the cursor is already elsewhere closes
+                  // as usual; unpinning under the cursor keeps it open.
+                  if (!next) {
+                    const { x: px, y: py } = mousePos.current;
+                    if (px >= 0) {
+                      leaveTimer.current = window.setTimeout(() => {
+                        const hit = document.elementFromPoint(px, py);
+                        if (!hit) closePanel();
+                      }, notch.animation.closeDelay);
+                    }
+                  }
+                }}
+              >
+                <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} fill="none" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+                  <line x1="12" x2="12" y1="17" y2="22" />
+                  <path d="M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z" />
+                </svg>
+              </button>
+            )}
+            {expanded && (
+              <button
                 className="nst-btn"
                 title="Close panel"
                 aria-label="Close panel"
@@ -529,6 +818,25 @@ export function NotchApp() {
         </div>
 
         <div className="notch-expanded" ref={expandedRef}>
+          {activeTab === "home" && (
+            <HomeWidget
+              showMedia={notch.widgets.media}
+              media={media}
+              art={art}
+              ambient={notch.appearance.ambientArt}
+              ambientColor={notch.appearance.ambientColor}
+              showTimer={notch.widgets.timer}
+              timer={timer}
+              onStart={startTimer}
+              onToggle={toggleTimer}
+              onReset={resetTimer}
+              onExtend={extendTimer}
+              showMonitors={notch.widgets.monitors}
+              sys={sys}
+              showBluetooth={notch.widgets.bluetooth}
+              devices={devices}
+            />
+          )}
           {tabs.map((key) =>
             activeTab !== key ? null : (
               <div key={key} className="npanel">
@@ -542,7 +850,7 @@ export function NotchApp() {
                   />
                 )}
                 {key === "timer" && (
-                  <TimerWidget timer={timer} onStart={startTimer} onToggle={toggleTimer} onReset={resetTimer} />
+                  <TimerWidget timer={timer} onStart={startTimer} onToggle={toggleTimer} onReset={resetTimer} onExtend={extendTimer} />
                 )}
                 {key === "monitors" && <MonitorsWidget sys={sys} />}
                 {key === "bluetooth" && <BluetoothWidget devices={devices} />}
@@ -573,6 +881,50 @@ const TAB_TITLES: Record<TabKey, string> = {
  * media poll), which remounted the whole panel subtree every second and
  * replayed the opening animation each time.
  */
+
+/**
+ * Default roll-out view: media card on the left, focus timer + system
+ * monitors (+ Bluetooth, if enabled) stacked on the right — the hover
+ * "home" dashboard. The tab icons switch to individual full panels from
+ * here; every column only appears when its widget is enabled.
+ */
+function HomeWidget(props: {
+  showMedia: boolean;
+  media: MediaInfo | null;
+  art: string | null;
+  ambient: boolean;
+  ambientColor?: string;
+  showTimer: boolean;
+  timer: TimerState;
+  onStart: (m: number) => void;
+  onToggle: () => void;
+  onReset: () => void;
+  onExtend: (m: number) => void;
+  showMonitors: boolean;
+  sys: SystemSnapshot | null;
+  showBluetooth: boolean;
+  devices: BtDevice[];
+}) {
+  const { showMedia, media, art, ambient, ambientColor, showTimer, timer, onStart, onToggle, onReset, onExtend, showMonitors, sys, showBluetooth, devices } = props;
+  const right = (
+    <>
+      {showTimer && <TimerWidget timer={timer} onStart={onStart} onToggle={onToggle} onReset={onReset} onExtend={onExtend} />}
+      {showMonitors && <MonitorsWidget sys={sys} />}
+      {showBluetooth && <BluetoothWidget devices={devices} />}
+    </>
+  );
+  const hasRight = showTimer || showMonitors || showBluetooth;
+  if (showMedia && hasRight) {
+    return (
+      <div className="nhome">
+        <MediaWidget media={media} art={art} ambient={ambient} ambientColor={ambientColor ?? ""} />
+        <div className="nhome-right">{right}</div>
+      </div>
+    );
+  }
+  // A single enabled group renders alone, full width.
+  return <div className="nhome single">{showMedia ? <MediaWidget media={media} art={art} ambient={ambient} ambientColor={ambientColor ?? ""} /> : right}</div>;
+}
 
 function MediaWidget({
   media,
@@ -633,36 +985,72 @@ function TimerWidget({
   onStart,
   onToggle,
   onReset,
+  onExtend,
 }: {
   timer: TimerState;
   onStart: (minutes: number) => void;
   onToggle: () => void;
   onReset: () => void;
+  onExtend: (minutes: number) => void;
 }) {
+  const active = timer.running || timer.leftMs > 0 || timer.finished;
   const pct = timer.totalMs > 0 ? Math.max(0, Math.min(100, (timer.leftMs / timer.totalMs) * 100)) : 0;
-  const label = timer.leftMs > 0 ? fmtTime(timer.leftMs) : "Ready";
+  const label = timer.finished ? "✓" : timer.leftMs > 0 ? fmtTime(timer.leftMs) : "Ready";
+  const activePreset = TIMER_PRESETS.find((m) => Math.abs(timer.totalMs - m * 60_000) < 500);
   return (
-    <div className="notch-section notch-timer">
-      <div className="notch-ringwrap nft-ring">
+    <div className={`notch-section notch-timer${timer.finished ? " finished" : ""}`}>
+      <div className={`notch-ringwrap nft-ring${timer.finished ? " done" : timer.running ? "" : timer.leftMs > 0 ? " paused" : ""}`}>
+        {/* conic ring: accent fills the REMAINING share and drains as time
+            passes; a finished session stays full in green. */}
         <div
           className="notch-ring"
           style={{
-            background: `conic-gradient(var(--accent) ${timer.running || pct > 0 ? pct : 0}%, var(--ntrack) 0)`,
+            background: timer.finished
+              ? "conic-gradient(var(--ok) 100%, var(--ntrack) 0)"
+              : `conic-gradient(var(--accent) ${pct}%, var(--ntrack) 0)`,
           }}
         />
         <span className="notch-ring-text nft-clock">{label}</span>
       </div>
       <div className="nft-side">
+        {timer.finished ? (
+          <div className="nft-done">
+            <span className="nft-done-title">Focus session done ✓</span>
+            <span className="nft-done-meta">Finished {fmtDone(Date.now())} — pick your next focus</span>
+          </div>
+        ) : null}
         <div className="nft-presets">
           {TIMER_PRESETS.map((m) => (
-            <button key={m} className="nft-chip" onClick={() => onStart(m)}>{m}m</button>
+            <button
+              key={m}
+              className={`nft-chip${activePreset === m ? " active" : ""}`}
+              title={`Start a ${m} minute focus session`}
+              onClick={() => onStart(m)}
+            >
+              {m}m
+            </button>
           ))}
         </div>
         <div className="nft-ctl">
-          <button className="nft-chip" onClick={onToggle} disabled={timer.leftMs === 0}>
-            {timer.running ? "Pause" : "Start"}
-          </button>
-          <button className="nft-chip" onClick={onReset}>Reset</button>
+          {active && !timer.finished && (
+            <>
+              <button className="nft-chip primary" onClick={onToggle}>
+                {timer.running ? "Pause" : "Resume"}
+              </button>
+              <button className="nft-chip" title="Add 5 minutes to the current session" onClick={() => onExtend(5)}>
+                +5m
+              </button>
+              <button className="nft-chip" title="Add 15 minutes to the current session" onClick={() => onExtend(15)}>
+                +15m
+              </button>
+            </>
+          )}
+          {!active && (
+            <button className="nft-chip primary" onClick={onToggle} disabled>
+              Start
+            </button>
+          )}
+          {active && <button className="nft-chip" onClick={onReset}>Reset</button>}
         </div>
       </div>
     </div>
@@ -793,13 +1181,20 @@ function PillClock({ hour12 }: { hour12: boolean }) {
     return () => window.clearInterval(id);
   }, []);
 
-  const text = new Intl.DateTimeFormat("en-US", {
+  const fmt = new Intl.DateTimeFormat("en-US", {
     hour: "numeric",
     minute: "2-digit",
     hour12,
     hourCycle: hour12 ? "h12" : "h23",
-  }).format(now);
-  return <span className="notch-pill-clock">{text}</span>;
+  });
+  const time = fmt.format(now);
+  const day = new Intl.DateTimeFormat("en-US", { weekday: "short" }).format(now);
+  return (
+    <span className="notch-pill-clock">
+      <span className="nc-week">{day}</span>
+      {time}
+    </span>
+  );
 }
 
 function RunWidget({ apps, onRescan }: { apps: AppInfo[]; onRescan: () => void }) {

@@ -107,18 +107,33 @@ unsafe fn do_embed(hwnd: windows::Win32::Foundation::HWND) -> bool {
     let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
     let ex_add = (WS_EX_NOACTIVATE.0 | WS_EX_TRANSPARENT.0 | WS_EX_TOOLWINDOW.0) as isize;
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, (ex | ex_add) as _);
+    // Snapshot the window's own screen rect BEFORE re-parenting — after
+    // SetParent screen coordinates become parent-client coordinates, and
+    // callers size/position each wallpaper to its own display. The old
+    // behavior (reset to 0,0 at full WorkerW size) stretched every wallpaper
+    // across ALL monitors, which could swallow the Windows taskbar beneath it.
+    let mut self_rect = RECT::default();
+    if GetWindowRect(hwnd, &mut self_rect).is_err() {
+        return false;
+    }
     let _ = SetParent(hwnd, target);
     let mut rect = RECT::default();
     if GetWindowRect(target, &mut rect).is_err() {
         return false;
     }
-    let cx = (rect.right - rect.left).max(1);
-    let cy = (rect.bottom - rect.top).max(1);
+    // Place the child at its previous screen position (now WorkerW-relative),
+    // clamped inside the worker so nothing can spill past the virtual screen.
+    let worker_w = (rect.right - rect.left).max(1);
+    let worker_h = (rect.bottom - rect.top).max(1);
+    let x = (self_rect.left - rect.left).clamp(0, worker_w - 1);
+    let y = (self_rect.top - rect.top).clamp(0, worker_h - 1);
+    let cx = (self_rect.right - self_rect.left).clamp(1, worker_w);
+    let cy = (self_rect.bottom - self_rect.top).clamp(1, worker_h);
     let _ = SetWindowPos(
         hwnd,
         HWND_BOTTOM,
-        0,
-        0,
+        x,
+        y,
         cx,
         cy,
         SWP_FRAMECHANGED | SWP_NOACTIVATE,

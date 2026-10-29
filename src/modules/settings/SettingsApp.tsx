@@ -1,17 +1,19 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { useSettings, hasTauri, NOTCH_FX_LABELS, NOTCH_FX_DESCRIPTIONS, NOTCH_FX_MUSIC } from "../../store/settings";
 import type { ModuleKey, Settings, NotchFx } from "../../store/settings";
 import { NotchFxBackdrop } from "../../lib/notch-fx";
 
-type Section = "general" | "appearance" | "wallpaper" | "notch" | "shortcuts" | "todo";
+type Section = "general" | "appearance" | "wallpaper" | "notch" | "start" | "shortcuts" | "todo";
 
 const SECTIONS: { id: Section; label: string; icon: string }[] = [
   { id: "general", label: "General", icon: "🏠" },
   { id: "appearance", label: "Clock", icon: "🕐" },
   { id: "wallpaper", label: "Wallpaper", icon: "🖼" },
   { id: "notch", label: "Smart Notch", icon: "🏝" },
+  { id: "start", label: "Start Launcher", icon: "🔍" },
   { id: "shortcuts", label: "Shortcuts", icon: "⚡" },
   { id: "todo", label: "To-Do", icon: "✅" },
 ];
@@ -48,6 +50,17 @@ export function SettingsApp() {
   const update = useSettings((s) => s.update);
   const [section, setSection] = useState<Section>("general");
 
+  // Keep the OS-level settings hotkey in sync with the saved config: applied
+  // on boot (restores a custom combo after a restart) and on every change.
+  // The Rust command tears down old registrations and registers the new one.
+  useEffect(() => {
+    if (!hasTauri()) return;
+    void invoke("app_shortcut_set", {
+      enabled: settings.hotkey.enabled,
+      combo: settings.hotkey.combo.trim() || null,
+    });
+  }, [settings.hotkey.enabled, settings.hotkey.combo]);
+
   return (
     <div className="settings-app" data-theme={settings.theme}>
       <aside className="settings-sidebar">
@@ -66,7 +79,9 @@ export function SettingsApp() {
         <div className="settings-footnote">
           Changes apply live — no restart needed.
           <br />
-          Ctrl+Shift+, or Ctrl+Shift++ opens this panel.
+          {settings.hotkey.enabled
+            ? settings.hotkey.combo.trim() || "Ctrl+Shift+, or Ctrl+Shift++ opens this panel."
+            : "Hotkey disabled — use the tray icon to open this panel."}
         </div>
       </aside>
 
@@ -76,14 +91,14 @@ export function SettingsApp() {
         <div key={section} className="panel-anim">
         {section === "general" && (
           <Panel title="General">
-            <Row label="Theme" hint="Switch between dark and light surfaces">
+            <Row label="Theme">
               <Segmented
                 options={["dark", "light"]}
                 value={settings.theme}
                 onChange={(v) => update({ theme: v })}
               />
             </Row>
-            <Row label="Accent color" hint="Used across widgets, notch and controls">
+            <Row label="Accent color">
               <div className="accent-row">
                 {ACCENTS.map((c) => (
                   <button
@@ -102,7 +117,7 @@ export function SettingsApp() {
                 />
               </div>
             </Row>
-            <Row label="Start with Windows" hint="Launch Aura automatically when you sign in — starts quietly in the tray">
+            <Row label="Start with Windows">
               <Switch
                 on={settings.launchOnStartup}
                 onChange={(v) => {
@@ -117,7 +132,16 @@ export function SettingsApp() {
               <Row key={m.key} label={m.label} hint={m.hint}>
                 <Switch
                   on={settings.modules[m.key]}
-                  onChange={(v) => update({ modules: { [m.key]: v } })}
+                  onChange={(v) =>
+                    update({
+                      modules: { [m.key]: v },
+                      // Turning the wallpaper on always re-pins it to the very
+                      // bottom so apps can never end up behind it.
+                      ...(m.key === "wallpaper" && v
+                        ? { wallpaper: { win: { level: "bottommost" as const } } }
+                        : {}),
+                    })
+                  }
                 />
               </Row>
             ))}
@@ -126,17 +150,17 @@ export function SettingsApp() {
 
         {section === "appearance" && (
           <Panel title="Clock">
-            <Row label="Clock layout" hint="Three minimal layouts">
+            <Row label="Clock layout">
               <Segmented
                 options={["digital", "analog", "minimal"]}
                 value={settings.clock.layout}
                 onChange={(v) => update({ clock: { layout: v } })}
               />
             </Row>
-            <Row label="24-hour format" hint="Uncheck for 12h with AM/PM">
+            <Row label="24-hour format">
               <Switch on={!settings.clock.format12h} onChange={(v) => update({ clock: { format12h: !v } })} />
             </Row>
-            <Row label="Timezone" hint="Clock renders in this zone instead of the system one">
+            <Row label="Timezone">
               <select
                 value={settings.clock.timezone ?? ""}
                 onChange={(e) => update({ clock: { timezone: e.target.value || null } })}
@@ -148,11 +172,14 @@ export function SettingsApp() {
                   </option>
                 ))}
               </select>
+            </Row><Row label="Background">
+              <Switch
+                on={settings.clock.background} onChange={(v) => update({ clock: { background: v } })} />
             </Row>
-            <Row label="Show date" hint="Weekday/month line under the time">
+            <Row label="Show date">
               <Switch on={settings.clock.showDate} onChange={(v) => update({ clock: { showDate: v } })} />
             </Row>
-            <Row label="Show seconds" hint="Seconds tick in the digital and minimal layouts">
+            <Row label="Show seconds">
               <Switch on={settings.clock.showSeconds} onChange={(v) => update({ clock: { showSeconds: v } })} />
             </Row>
             <Divider />
@@ -163,16 +190,26 @@ export function SettingsApp() {
 
         {section === "wallpaper" && (
           <Panel title="Wallpaper Engine">
-            <Row label="Enabled" hint="Master toggle (also in General → Modules)">
+            <Row
+              label="Enabled"
+              hint="Master toggle (also in General → Modules) — enabling always pins the wallpaper to the very bottom, behind every app"
+            >
               <Switch
                 on={settings.modules.wallpaper}
-                onChange={(v) => update({ modules: { wallpaper: v } })}
+                onChange={(v) =>
+                  update(
+                    v
+                      ? { modules: { wallpaper: v }, wallpaper: { win: { level: "bottommost" as const } } }
+                      : { modules: { wallpaper: v } },
+                  )
+                }
               />
             </Row>
             <Divider />
             <p className="section-sub">Window — layer and input behavior. Coordinates live in the Scaling/Position sliders below.</p>
             <ModuleWindowEditor module="wallpaper" opts={{ coordinates: false, text: false, capacity: false }} />
             <WallpaperLibraryEditor />
+            <PerDisplayWallpapers />
             {settings.wallpaper.path && !settings.wallpaper.library.some((i) => i.path === settings.wallpaper.path) && (
               <Row label="External file in use" hint={settings.wallpaper.path}>
                 <span />
@@ -185,7 +222,7 @@ export function SettingsApp() {
                 onChange={(v) => update({ wallpaper: { fit: v as Settings["wallpaper"]["fit"] } })}
               />
             </Row>
-            <Row label={`Scaling · ${settings.wallpaper.scale.toFixed(2)}×`} hint="Zoom into the image or video">
+            <Row label={`Scaling · ${settings.wallpaper.scale.toFixed(2)}×`}>
               <Slider
                 min={0.5}
                 max={3}
@@ -194,7 +231,7 @@ export function SettingsApp() {
                 onChange={(v) => update({ wallpaper: { scale: v } })}
               />
             </Row>
-            <Row label={`Position X · ${settings.wallpaper.offsetX}`} hint="Horizontal pan, percent">
+            <Row label={`Position X · ${settings.wallpaper.offsetX}`}>
               <Slider
                 min={-100}
                 max={100}
@@ -203,7 +240,7 @@ export function SettingsApp() {
                 onChange={(v) => update({ wallpaper: { offsetX: v } })}
               />
             </Row>
-            <Row label={`Position Y · ${settings.wallpaper.offsetY}`} hint="Vertical pan, percent">
+            <Row label={`Position Y · ${settings.wallpaper.offsetY}`}>
               <Slider
                 min={-100}
                 max={100}
@@ -212,7 +249,7 @@ export function SettingsApp() {
                 onChange={(v) => update({ wallpaper: { offsetY: v } })}
               />
             </Row>
-            <Row label={`Dimming · ${settings.wallpaper.dimmer}%`} hint="Darkens the wallpaper so icons and widgets read better">
+            <Row label={`Dimming · ${settings.wallpaper.dimmer}%`}>
               <Slider
                 min={0}
                 max={100}
@@ -223,7 +260,7 @@ export function SettingsApp() {
             </Row>
             {settings.wallpaper.kind === "video" && (
               <>
-                <Row label={`Playback speed · ${settings.wallpaper.playbackRate.toFixed(2)}×`} hint="Video playback rate">
+                <Row label={`Playback speed · ${settings.wallpaper.playbackRate.toFixed(2)}×`}>
                   <Slider
                     min={0.25}
                     max={2}
@@ -234,7 +271,6 @@ export function SettingsApp() {
                 </Row>
                 <Row
                   label={`Volume · ${Math.round(settings.wallpaper.volume * 100)}%${settings.wallpaper.muted ? " (muted)" : ""}`}
-                  hint="Hardware-accelerated video playback volume"
                 >
                   <Sliders
                     value={settings.wallpaper.volume}
@@ -250,37 +286,43 @@ export function SettingsApp() {
 
         {section === "notch" && (
           <Panel title="Smart Notch">
-            <Row label="Media Player" hint="Local Spotify / system media via Windows SMTC: title, artist, album art, progress, play/pause">
+            <Row label="Background">
+              <Switch
+                on={settings.notch.background}
+                onChange={(v) => update({ notch: { background: v } })}
+              />
+            </Row>
+            <Row label="Media Player">
               <Switch
                 on={settings.notch.widgets.media}
                 onChange={(v) => update({ notch: { widgets: { media: v } } })}
               />
             </Row>
-            <Row label="System Monitors" hint="CPU, RAM and network speed, polled natively every 1.5s">
+            <Row label="System Monitors">
               <Switch
                 on={settings.notch.widgets.monitors}
                 onChange={(v) => update({ notch: { widgets: { monitors: v } } })}
               />
             </Row>
-            <Row label="Focus Timer" hint="Countdown with presets (5/15/25/50 min) and a chime when it ends — mini countdown in the pill while running">
+            <Row label="Focus Timer">
               <Switch
                 on={settings.notch.widgets.timer}
                 onChange={(v) => update({ notch: { widgets: { timer: v } } })}
               />
             </Row>
-            <Row label="Clipboard History" hint="Recent copied text with one-click copy-back — the Windows clipboard is polled every 2s">
+            <Row label="Clipboard History">
               <Switch
                 on={settings.notch.widgets.clipboard}
                 onChange={(v) => update({ notch: { widgets: { clipboard: v } } })}
               />
             </Row>
-            <Row label="Bluetooth Devices" hint="Battery percentage for connected headphones, mice and other paired devices">
+            <Row label="Bluetooth Devices">
               <Switch
                 on={settings.notch.widgets.bluetooth}
                 onChange={(v) => update({ notch: { widgets: { bluetooth: v } } })}
               />
             </Row>
-            <Row label="Quick Shortcuts" hint="One-click access to apps and URLs">
+            <Row label="Quick Shortcuts">
               <Switch
                 on={settings.notch.widgets.shortcuts}
                 onChange={(v) => update({ notch: { widgets: { shortcuts: v } } })}
@@ -339,7 +381,6 @@ export function SettingsApp() {
             </Row>
             <Row
               label={`Thickness · ${settings.notch.thickness}px`}
-              hint="Height of the collapsed strip"
             >
               <Slider
                 min={30}
@@ -365,7 +406,6 @@ export function SettingsApp() {
             </Row>
             <Row
               label={`Opacity · ${Math.round(settings.notch.appearance.glassOpacity * 100)}%`}
-              hint="How solid the glass reads — higher is more opaque"
             >
               <Slider
                 min={30}
@@ -377,7 +417,6 @@ export function SettingsApp() {
             </Row>
             <Row
               label={`Corner radius · ${settings.notch.appearance.radius}px`}
-              hint="Roundness of the pill and expanded panel"
             >
               <Slider
                 min={14}
@@ -389,12 +428,11 @@ export function SettingsApp() {
             </Row>
             <Row
               label={`Accent glow · ${Math.round(settings.notch.appearance.glow * 100)}%`}
-              hint="Strength of the accent halo and aura — 0 turns all glow off"
             >
               <Slider
                 min={0}
                 max={100}
-                step={5}
+                step={1}
                 value={Math.round(settings.notch.appearance.glow * 100)}
                 onChange={(v) => update({ notch: { appearance: { glow: v / 100 } } })}
               />
@@ -463,7 +501,6 @@ export function SettingsApp() {
             <p className="section-sub">Motion — how the notch behaves.</p>
             <Row
               label={`Animation speed · ${settings.notch.animation.speed.toFixed(2)}×`}
-              hint="Below 1× is snappier and cheaper, above 1× is more dramatic"
             >
               <Slider
                 min={0.25}
@@ -498,34 +535,76 @@ export function SettingsApp() {
             <p className="section-sub">Window — layer, input behavior, position override and typography.</p>
             <ModuleWindowEditor module="notch" opts={{ capacity: false }} />
             <Divider />
-            <p className="section-sub">Collapsed pill — what shows at 44px.</p>
-            <Row label="Show “Aura” label" hint="Just the status dot and live indicators when off">
+            <p className="section-sub">Collapsed pill — what shows at 44px. Fully independent from the widget tabs above: the pill can show a chip while its expanded panel is hidden, and vice versa.</p>
+            <Row label="Show “Aura” label">
               <Switch
                 on={settings.notch.collapsed.showName}
                 onChange={(v) => update({ notch: { collapsed: { showName: v } } })}
               />
             </Row>
-            <Row label="Show clock in pill" hint="Live time next to the label, follows the clock format setting">
+            <Row label="Show clock in pill">
               <Switch
                 on={settings.notch.collapsed.showClock}
                 onChange={(v) => update({ notch: { collapsed: { showClock: v } } })}
               />
             </Row>
             <Divider />
-            <Row label="Bring notch to front" hint="Re-show the widget after moving or hiding it">
+            <p className="section-sub">Minimized pill — live indicators. Each one is its own switch and does not touch the hovered (expanded) panel.</p>
+            <Row label="Mini timer chip">
+              <Switch
+                on={settings.notch.collapsed.showTimer}
+                onChange={(v) => update({ notch: { collapsed: { showTimer: v } } })}
+              />
+            </Row>
+            <Row label="Memory chip">
+              <Switch
+                on={settings.notch.collapsed.showMem}
+                onChange={(v) => update({ notch: { collapsed: { showMem: v } } })}
+              />
+            </Row>
+            <Row label="Network chip">
+              <Switch
+                on={settings.notch.collapsed.showNet}
+                onChange={(v) => update({ notch: { collapsed: { showNet: v } } })}
+              />
+            </Row>
+            <Row label="Mini media indicator">
+              <Switch
+                on={settings.notch.collapsed.showMedia}
+                onChange={(v) => update({ notch: { collapsed: { showMedia: v } } })}
+              />
+            </Row>
+            <Divider />
+            <Row label="Bring notch to front">
               <InvokeButton label="Reshow notch" target="notch" />
+            </Row>
+          </Panel>
+        )}
+
+        {section === "start" && (
+          <Panel title="Start Launcher">
+            <Row label="Enabled">
+              <Switch on={settings.modules.start} onChange={(v) => update({ modules: { start: v } })} />
+            </Row>
+            <Row label="Background">
+              <Switch on={settings.start.background} onChange={(v) => update({ start: { background: v } })} />
             </Row>
           </Panel>
         )}
 
         {section === "shortcuts" && (
           <Panel title="Shortcuts">
-            <Row label="Global shortcut" hint="Ctrl + Shift + , or Ctrl + Shift + + toggles this settings panel from anywhere">
-              <div className="inline-actions">
-                <kbd>Ctrl+Shift+,</kbd>
-                <kbd>Ctrl+Shift++</kbd>
-              </div>
+            <Row label="Open settings hotkey" hint="Global key combination that shows/hides this settings panel from anywhere — off disables it entirely (the tray icon still opens the panel)">
+              <Switch
+                on={settings.hotkey.enabled}
+                onChange={(v) => update({ hotkey: { enabled: v } })}
+              />
             </Row>
+            {settings.hotkey.enabled && (
+              <Row label="Shortcut" hint="Click the box and press your own combination — at least one modifier (Ctrl/Alt/Shift/Win) plus a key. Esc cancels">
+                <HotkeyRecorder combo={settings.hotkey.combo} />
+              </Row>
+            )}
             <Divider />
             <ShortcutEditor />
           </Panel>
@@ -533,8 +612,11 @@ export function SettingsApp() {
 
         {section === "todo" && (
           <Panel title="To-Do module">
-            <Row label="Enabled" hint="Master toggle (also in General → Modules)">
+            <Row label="Enabled">
               <Switch on={settings.modules.todo} onChange={(v) => update({ modules: { todo: v } })} />
+            </Row>
+            <Row label="Background">
+              <Switch on={settings.todo.background} onChange={(v) => update({ todo: { background: v } })} />
             </Row>
             <Row label="Task ordering" hint="Smart sorts by priority and due date; Created shows newest first">
               <Segmented
@@ -634,13 +716,24 @@ function ModuleWindowEditor({
           ))}
         </select>
       </Row>
-      <Row label="Layer" hint="Topmost = always above other windows · On screen = normal window · Bottommost = pinned to the very bottom (wallpaper embeds behind desktop icons)">
-        <Segmented
-          options={["topmost", "normal-on-screen", "bottommost"] as const}
-          value={win.level === "normal" ? "normal-on-screen" : win.level}
-          onChange={(v) => setWin({ level: (v === "normal-on-screen" ? "normal" : v) as typeof win.level })}
-        />
-      </Row>
+      {module === "wallpaper" ? (
+        <Row
+          label="Layer"
+          hint="Always pinned to the very bottom (embedded behind your desktop icons) so apps can never end up behind it — locked by design"
+        >
+          <span className="chip active" style={{ cursor: "default" }} title="The wallpaper is forced to the bottom automatically">
+            Bottommost · locked
+          </span>
+        </Row>
+      ) : (
+        <Row label="Layer" hint="Topmost = always above other windows · On screen = normal window · Bottommost = pinned to the very bottom (wallpaper embeds behind desktop icons)">
+          <Segmented
+            options={["topmost", "normal-on-screen", "bottommost"] as const}
+            value={win.level === "normal" ? "normal-on-screen" : win.level}
+            onChange={(v) => setWin({ level: (v === "normal-on-screen" ? "normal" : v) as typeof win.level })}
+          />
+        </Row>
+      )}
       {opts.coordinates !== false && (
         <>
           <Row label={`Position X · ${win.x == null ? "auto" : win.x}`} hint="Left position in pixels inside the chosen display — auto lets Aura place it">
@@ -660,12 +753,12 @@ function ModuleWindowEditor({
       <Row label="Click-through" hint="Mouse clicks pass straight through the window — you can't drag or interact with it while on">
         <Switch on={win.clickThrough} onChange={(v) => setWin({ clickThrough: v })} />
       </Row>
-      <Row label="Draggable" hint="Shows a drag grab handle / drag region so you can move the widget">
+      <Row label="Draggable">
         <Switch on={win.draggable} onChange={(v) => setWin({ draggable: v })} />
       </Row>
       {opts.capacity && (
         <>
-          <Row label={`Capacity width · ${win.capacity.width.toFixed(2)}×`} hint="Window width as a multiple of the default size">
+          <Row label={`Capacity width · ${win.capacity.width.toFixed(2)}×`}>
             <Slider
               min={0.4}
               max={2}
@@ -674,7 +767,7 @@ function ModuleWindowEditor({
               onChange={(v) => setWin({ capacity: { ...win.capacity, width: v } })}
             />
           </Row>
-          <Row label={`Capacity height · ${win.capacity.height.toFixed(2)}×`} hint="Window height as a multiple of the default size">
+          <Row label={`Capacity height · ${win.capacity.height.toFixed(2)}×`}>
             <Slider
               min={0.4}
               max={2}
@@ -688,7 +781,19 @@ function ModuleWindowEditor({
       {opts.text !== false && (
         <>
           <Divider />
-          <p className="section-sub">Text style — typography of this widget's text.</p>
+          <p className="section-sub">Elements & text — the zoom of everything inside the widget, then typography.</p>
+          <Row
+            label={`Element scale · ${win.elementScale.toFixed(2)}×`}
+            hint="Zoom of the widget's elements (rows, chips, panels) as a whole — like a capacity knob for content, without changing the window or the text-size setting"
+          >
+            <Slider
+              min={0.7}
+              max={1.6}
+              step={0.05}
+              value={win.elementScale}
+              onChange={(v) => setWin({ elementScale: v })}
+            />
+          </Row>
           <Row label="Font family" hint="A few curated faces; pick Custom to type any installed font">
             <div className="inline-actions">
               <select
@@ -709,7 +814,7 @@ function ModuleWindowEditor({
               />
             </div>
           </Row>
-          <Row label={`Text size · ${win.text.sizeScale.toFixed(2)}×`} hint="Scales every text element in the widget">
+          <Row label={`Text size · ${win.text.sizeScale.toFixed(2)}×`}>
             <Slider
               min={0.6}
               max={1.8}
@@ -718,14 +823,14 @@ function ModuleWindowEditor({
               onChange={(v) => setWin({ text: { ...win.text, sizeScale: v } })}
             />
           </Row>
-          <Row label="Font weight" hint="Heavy to light strokes">
+          <Row label="Font weight">
             <Segmented
               options={["inherit", "300", "400", "600", "700"] as const}
               value={win.text.weight === 0 ? "inherit" : String(win.text.weight) as "300" | "400" | "600" | "700" | "inherit"}
               onChange={(v) => setWin({ text: { ...win.text, weight: v === "inherit" ? 0 : Number(v) } })}
             />
           </Row>
-          <Row label="Text color" hint="Custom text color — clear to keep the theme colors">
+          <Row label="Text color">
             <div className="accent-row">
               <input
                 type="color"
@@ -781,6 +886,12 @@ interface TipPos {
   caretX: number;
 }
 
+/** Module-level registry: only ONE hint popover may be open at a time.
+ *  Opening a new one instantly closes the previous — stale popovers can
+ *  otherwise linger (e.g. open via focus, then another badge hover) and
+ *  stack on top of unrelated rows. */
+const activeTip = { close: null as null | (() => void) };
+
 function Row({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) {
   const badgeRef = useRef<HTMLButtonElement | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -789,6 +900,12 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
   /** Position the fixed popover under/over the badge, clamped to the viewport. */
   const open = (immediately = false) => {
     if (!hint) return;
+    // Singleton: kill whatever other row's popover is showing (and its timer).
+    activeTip.close?.();
+    const closeSelf = () => {
+      setTip(null);
+      if (activeTip.close === closeSelf) activeTip.close = null;
+    };
     const place = () => {
       const b = badgeRef.current?.getBoundingClientRect();
       if (!b) return;
@@ -800,6 +917,7 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
         above,
         caretX: Math.max(14, b.left - left + b.width / 2),
       });
+      activeTip.close = closeSelf;
     };
     if (immediately) place();
     else timerRef.current = window.setTimeout(place, 160);
@@ -809,7 +927,11 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
       window.clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    setTip(null);
+    // Only clear the singleton slot if it still points at THIS row's closer.
+    if (activeTip.close) {
+      const closer = activeTip.close;
+      closer();
+    }
   };
 
   // Scrolling or resizing the window unanchors a fixed tooltip — dismiss it.
@@ -856,17 +978,24 @@ function Row({ label, hint, children }: { label: string; hint?: string; children
         </div>
       </div>
       <div className="setting-control">{children}</div>
-      {tip && hint && (
-        <div
-          className={`info-tip-pop${tip.above ? " above" : ""}`}
-          role="tooltip"
-          style={
-            { left: tip.left, top: tip.top, "--caret-x": `${tip.caretX}px` } as CSSProperties
-          }
-        >
-          {hint}
-        </div>
-      )}
+      {/* Portal to <body>: entrance animations leave a computed transform on
+          .setting-row/.panel-anim, and ANY ancestor transform makes it the
+          containing block for position: fixed — the popover would anchor to
+          the row instead of the viewport and appear "elsewhere". A portal
+          escapes every ancestor transform for good. */}
+      {tip && hint &&
+        createPortal(
+          <div
+            className={`info-tip-pop${tip.above ? " above" : ""}`}
+            role="tooltip"
+            style={
+              { left: tip.left, top: tip.top, "--caret-x": `${tip.caretX}px` } as CSSProperties
+            }
+          >
+            {hint}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
@@ -920,6 +1049,36 @@ function Slider({
   value: number;
   onChange: (v: number) => void;
 }) {
+  /** Ctrl+click swaps the slider for a number box so an exact value can be
+   *  typed (Scaling, Position, Length…) instead of hunting for the pixel. */
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
+  if (editing) {
+    const commit = () => {
+      const n = Number(draft.replace(",", "."));
+      if (Number.isFinite(n)) onChange(Math.min(max, Math.max(min, n)));
+      setEditing(false);
+    };
+    return (
+      <input
+        type="number"
+        autoFocus
+        value={draft}
+        min={min}
+        max={max}
+        step={step}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") commit();
+          else if (e.key === "Escape") setEditing(false);
+        }}
+        style={{ width: 130, padding: "5px 8px", borderRadius: 8, fontSize: 12 }}
+      />
+    );
+  }
+
   return (
     <input
       type="range"
@@ -929,6 +1088,18 @@ function Slider({
       step={step}
       value={value}
       onChange={(e) => onChange(Number(e.target.value))}
+      // Block the native thumb-jump on mouse-down, then open the number editor.
+      onMouseDown={(e) => {
+        if (e.ctrlKey || e.metaKey) e.preventDefault();
+      }}
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey) {
+          e.preventDefault();
+          setDraft(String(value));
+          setEditing(true);
+        }
+      }}
+      title="Ctrl+click to type an exact value"
       style={{ width: 220 }}
     />
   );
@@ -976,6 +1147,98 @@ function InvokeButton({ label, target }: { label: string; target: string }) {
     >
       {label}
     </button>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Hotkey recorder: records a user-chosen global shortcut for the settings
+// panel. Produces lowercase combos in the Rust global-shortcut plugin's
+// syntax ("ctrl+shift+k"). Requires at least one modifier so everyday typing
+// can never map a plain key to a system-wide hotkey.
+// ---------------------------------------------------------------------------
+const CODE_MAP: Record<string, string> = {
+  Comma: ",",
+  Period: ".",
+  Slash: "/",
+  Backslash: "\\",
+  BracketLeft: "[",
+  BracketRight: "]",
+  Semicolon: ";",
+  Quote: "'",
+  Minus: "-",
+  Equal: "=",
+  Space: "space",
+};
+
+function codeToKey(e: KeyboardEvent): string | null {
+  const c = e.code;
+  if (/^Key[A-Z]$/.test(c)) return c.slice(3).toLowerCase();
+  if (/^Digit\d$/.test(c)) return c.slice(5);
+  if (/^F\d{1,2}$/.test(c)) return c.toLowerCase();
+  if (/^Numpad/.test(c)) return c.toLowerCase(); // e.g. numpadplus, numpad0
+  return CODE_MAP[c] ?? null;
+}
+
+function HotkeyRecorder({ combo }: { combo: string }) {
+  const update = useSettings((s) => s.update);
+  const [listening, setListening] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!listening) return;
+    const onKey = (e: KeyboardEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (e.key === "Escape") {
+        setListening(false);
+        return;
+      }
+      const main = codeToKey(e);
+      if (!main || main === "escape") return;
+      const mods: string[] = [];
+      if (e.ctrlKey) mods.push("ctrl");
+      if (e.altKey) mods.push("alt");
+      if (e.shiftKey) mods.push("shift");
+      if (e.metaKey) mods.push("super");
+      if (mods.length === 0) return; // modifiers first, then release on the key
+      const next = [...mods, main].join("+");
+      setListening(false);
+      setError(null);
+      // Register immediately so an invalid/taken combo is reported in place.
+      if (hasTauri()) {
+        void invoke("app_shortcut_set", { enabled: true, combo: next })
+          .then(() => setError(null))
+          .catch((err) => setError(String(err?.message ?? err)));
+      }
+      update({ hotkey: { combo: next } });
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [listening, update]);
+
+  return (
+    <div className="inline-actions" style={{ flexWrap: "wrap" }}>
+      {listening ? (
+        <button type="button" className="btn recording" onClick={() => setListening(false)}>
+          Press keys… (Esc to cancel)
+        </button>
+      ) : (
+        <button type="button" className="btn" onClick={() => setListening(true)}>
+          {combo || "Default — Ctrl+Shift+,"}
+        </button>
+      )}
+      {combo && (
+        <button
+          type="button"
+          className="btn"
+          onClick={() => update({ hotkey: { combo: "" } })}
+          title="Back to the builtin default"
+        >
+          Reset
+        </button>
+      )}
+      {error && <span className="hk-error">{error}</span>}
+    </div>
   );
 }
 
@@ -1117,6 +1380,138 @@ function baseName(path: string): string {
  * folder (Rust: `wallpaper_import`), so the source can later be moved or
  * deleted. Clicking a tile applies it; ✕ removes the copy from disk too.
  */
+/** Captured video first-frames, cached per file path — videos never change
+ *  their copy after import, so one capture per library entry suffices. */
+const videoThumbCache = new Map<string, string>();
+
+/**
+ * Thumbnail for a video wallpaper: loads the file in a hidden <video>, seeks
+ * briefly into it and grabs a canvas frame. Falls back to the 🎬 placeholder
+ * while loading or if the frame can't be captured (unseekable codecs etc.).
+ */
+function VideoThumb({ src, name }: { src: string; name: string }) {
+  const [frame, setFrame] = useState<string | null>(() => videoThumbCache.get(src) ?? null);
+
+  useEffect(() => {
+    if (frame || !hasTauri()) return;
+    const v = document.createElement("video");
+    v.muted = true;
+    v.preload = "auto";
+    v.src = src;
+    let captured = false;
+
+    const capture = () => {
+      if (captured || !v.videoWidth) return;
+      captured = true;
+      try {
+        // Fixed thumb width; keep the video's own aspect ratio.
+        const w = 220;
+        const h = Math.max(1, Math.round((v.videoHeight / v.videoWidth) * w));
+        const canvas = document.createElement("canvas");
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(v, 0, 0, w, h);
+        const url = canvas.toDataURL("image/jpeg", 0.72);
+        videoThumbCache.set(src, url);
+        setFrame(url);
+      } catch {
+        /* keep the placeholder */
+      }
+    };
+
+    // Prefer a frame slightly into the clip; very short videos keep frame 0.
+    v.addEventListener("loadedmetadata", () => {
+      if ((v.duration || 0) > 1) {
+        v.currentTime = Math.min(1.5, v.duration * 0.05);
+      }
+    });
+    // Fires after the seek (or right away when no seek was needed).
+    v.addEventListener("seeked", capture);
+    v.addEventListener("loadeddata", () => {
+      // No seek planned: this event IS the first frame.
+      setTimeout(capture, 60);
+    });
+
+    return () => {
+      v.removeEventListener("seeked", capture);
+      v.src = "";
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [src]);
+
+  if (frame) return <img src={frame} alt={name} loading="lazy" />;
+  return <span className="wp-tile-video wp-tile-video-loading">🎬</span>;
+}
+
+/**
+ * Per-display wallpaper assignment: a select per connected display, offering
+ * the library. “Default” removes the override so that display follows the
+ * main wallpaper chosen above.
+ */
+function PerDisplayWallpapers() {
+  const settings = useSettings((s) => s.settings);
+  const update = useSettings((s) => s.update);
+  const lib = settings.wallpaper.library;
+  const displays = settings.wallpaper.displays ?? {};
+
+  const [monitors, setMonitors] = useState<MonitorInfo[]>([]);
+  useEffect(() => {
+    if (!hasTauri()) return;
+    invoke<MonitorInfo[]>("get_monitors").then(setMonitors).catch(() => {});
+  }, []);
+
+  if (monitors.length === 0) return null;
+
+  return (
+    <>
+      <Divider />
+      <p className="section-sub">
+        Per-display wallpapers — give each connected screen its own image or video.
+        They share the fit, scale and dimming settings above.
+      </p>
+      {monitors.map((m, i) => {
+        const key = `${m.x},${m.y}`;
+        const assigned = displays[key];
+        return (
+          <Row
+            key={key}
+            label={`Wallpaper on Display ${i + 1} — ${m.width}×${m.height}${m.primary ? " · primary" : ""}`}
+            hint="Default follows the main wallpaper chosen in the library above; picking an entry pins it to just this display"
+          >
+            <select
+              value={assigned?.path ?? ""}
+              onChange={(e) => {
+                const next = { ...displays };
+                if (!e.target.value) {
+                  delete next[key];
+                } else {
+                  const item = lib.find((l) => l.path === e.target.value);
+                  if (item) next[key] = { path: item.path, kind: item.kind };
+                }
+                update({ wallpaper: { displays: next } });
+              }}
+              style={{ maxWidth: 240 }}
+            >
+              <option value="">Default — main wallpaper</option>
+              {lib.map((l) => (
+                <option key={l.path} value={l.path}>
+                  {l.kind === "video" ? "🎬 " : "🖼 "}
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </Row>
+        );
+      })}
+      {monitors.length <= 1 && (
+        <p className="section-sub">Connect a second display to give it a different wallpaper.</p>
+      )}
+    </>
+  );
+}
+
 function WallpaperLibraryEditor() {
   const settings = useSettings((s) => s.settings);
   const update = useSettings((s) => s.update);
@@ -1236,8 +1631,9 @@ function WallpaperLibraryEditor() {
                 {item.kind === "image" ? (
                   <img src={convertFileSrc(item.path)} alt={item.name} loading="lazy" />
                 ) : (
-                  <span className="wp-tile-video">🎬</span>
+                  <VideoThumb src={convertFileSrc(item.path)} name={item.name} />
                 )}
+                {item.kind === "video" && <span className="wp-tile-play" aria-hidden>▶</span>}
                 <span className="wp-tile-name">{item.name}</span>
                 {active && <span className="wp-tile-badge">In use</span>}
                 <button

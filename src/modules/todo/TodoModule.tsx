@@ -12,6 +12,7 @@ export function TodoModule() {
   const sortMode = useSettings((s) => s.settings.todo.sort);
   const draggable = useSettings((s) => s.settings.todo.win.draggable);
   const winStyle = useModuleWindow("todo");
+  const noBg = !useSettings((s) => s.settings.todo.background);
   const [text, setText] = useState("");
   const [category, setCategory] = useState(categories[0] ?? "Personal");
   const [priority, setPriority] = useState<Priority>("medium");
@@ -30,7 +31,7 @@ export function TodoModule() {
   const openCount = tasks.filter((t) => !t.done).length;
 
   return (
-    <div className="widget glass" style={winStyle}>
+    <div className={`widget glass${noBg ? " no-bg" : ""}`} style={winStyle}>
       <div
         style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: draggable ? "grab" : undefined }}
         {...(draggable ? { onPointerDown: dragHandle } : undefined)}
@@ -88,19 +89,21 @@ export function TodoModule() {
           title="Due date"
         />
         <button
-          className="btn primary"
-          style={{ fontSize: 12, padding: "6px 10px" }}
+          className="todo-add-btn"
+          aria-label="Add task"
           onClick={() => {
             add(text, category, priority, due || undefined);
             setText("");
             setDue("");
           }}
         >
-          +
+          <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4} fill="none" strokeLinecap="round" aria-hidden>
+            <path d="M12 5v14M5 12h14" />
+          </svg>
         </button>
       </div>
       {tasks.some((t) => t.done) && (
-        <button className="btn" style={{ marginTop: 8, fontSize: 11, padding: "4px 10px" }} onClick={clearDone}>
+        <button className="todo-clear" onClick={clearDone}>
           Clear {tasks.filter((t) => t.done).length} done
         </button>
       )}

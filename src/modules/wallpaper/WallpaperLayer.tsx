@@ -1,18 +1,97 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
-import { useEffect, useMemo, useRef } from "react";
-import { useSettings, useModuleWindow } from "../../store/settings";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useSettings, useModuleWindow, hasTauri } from "../../store/settings";
+
+/** Display info mirrored from the Rust `get_monitors` command. */
+interface Mon {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  scale: number;
+  primary: boolean;
+}
 
 export function WallpaperLayer() {
   const wallpaper = useSettings((s) => s.settings.wallpaper);
+  const wallpaperModuleOn = useSettings((s) => s.settings.modules.wallpaper);
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
+  /** This webview's display key ("<x>,<y>") when it is a per-display extra. */
+  const [extraKey, setExtraKey] = useState<string | null>(null);
+  /** Main window when true — it owns the sync of per-display extras. */
+  const [isMain, setIsMain] = useState(true);
+  /** This window's display key — for extras from the label, for the main
+   *  window from its configured display (primary when unset). */
+  const [selfKey, setSelfKey] = useState<string | null>(null);
+
+  // Identify which display THIS window covers (alias: dynamic import keeps the
+  // plain-browser preview working).
+  useEffect(() => {
+    if (!hasTauri()) return;
+    void import("@tauri-apps/api/webviewWindow")
+      .then(({ getCurrentWebviewWindow }) => {
+        const label = getCurrentWebviewWindow().label;
+        if (label.startsWith("wallpaper_")) {
+          // "wallpaper_<x>_<y>" — global origin of the display this extra fills.
+          const parts = label.slice("wallpaper_".length).split("_");
+          const x = Number(parts[0]);
+          const y = Number(parts[1]);
+          if (Number.isFinite(x) && Number.isFinite(y) && parts.length === 2) {
+            setExtraKey(`${x},${y}`);
+            setIsMain(false);
+            setSelfKey(`${x},${y}`);
+            return;
+          }
+        }
+        setIsMain(true);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Main window: resolve its own display key (explicit monitor or primary).
+  useEffect(() => {
+    if (!hasTauri() || !isMain) return;
+    const conf = wallpaper.win.monitor as { x: number; y: number } | null;
+    if (conf) {
+      setSelfKey(`${conf.x},${conf.y}`);
+      return;
+    }
+    void invoke<Mon[]>("get_monitors")
+      .then((list) => {
+        const p = list.find((m) => m.primary) ?? list[0];
+        setSelfKey(p ? `${p.x},${p.y}` : null);
+      })
+      .catch(() => {});
+  }, [isMain, wallpaper.win.monitor]);
+
+  // Main window: keep the per-display wallpaper windows in sync — create or
+  // show them for every display, hide torn-down extras (the module switch is
+  // the master visibility gate, same as the main wallpaper window).
+  const displaysKey = JSON.stringify(wallpaper.displays ?? {});
+  useEffect(() => {
+    if (!hasTauri() || !isMain) return;
+    void invoke("wallpaper_sync_displays", {
+      visible: wallpaperModuleOn,
+      mainMonitor: wallpaper.win.monitor ?? null,
+    }).catch(() => {});
+  }, [isMain, wallpaperModuleOn, displaysKey, wallpaper.win.monitor]);
+
   // Layer level (bottommost = embedded behind desktop icons, normal, topmost)
-  // and click-through — no text style applies to the wallpaper.
+  // and click-through. Extras run this too, but the command is addressed by the
+  // fixed "wallpaper" label, so only the main window is actually updated —
+  // per-display extras are configured by Rust at creation.
   useModuleWindow("wallpaper");
 
+  /** The wallpaper assigned to THIS display: a per-display override if there
+   *  is one, otherwise the main wallpaper. */
+  const ownKey = extraKey ?? selfKey;
+  const per = ownKey ? wallpaper.displays?.[ownKey] : undefined;
+  const path = per ? per.path : wallpaper.path;
+  const kind = per ? per.kind : wallpaper.kind;
   const src = useMemo(
-    () => (wallpaper.path ? convertFileSrc(wallpaper.path) : ""),
-    [wallpaper.path],
+    () => (path ? convertFileSrc(path) : ""),
+    [path],
   );
 
   useEffect(() => {
@@ -64,13 +143,13 @@ export function WallpaperLayer() {
     };
   }, [src]);
 
-  if (wallpaper.kind === "none" || !wallpaper.path || !src) {
+  if (kind === "none" || !path || !src) {
     return null;
   }
 
   const transform = `scale(${wallpaper.scale}) translate(${wallpaper.offsetX}%, ${wallpaper.offsetY}%)`;
 
-  if (wallpaper.kind === "video") {
+  if (kind === "video") {
     return (
       <div className="wallpaper-layer">
         <video
