@@ -1,9 +1,10 @@
 import { createRoot } from "react-dom/client";
+import { TodoModule } from "../modules/todo/TodoModule";
 import { setupSettingsSync } from "../lib/sync";
 import "../styles/base.css";
-import "../styles/widgets.css";
-import { TodoModule } from "../modules/todo/TodoModule";
 
-void setupSettingsSync("todo");
+document.body.dataset.module = "todo";
 
-createRoot(document.getElementById("root")!).render(<TodoModule />);
+void setupSettingsSync("todo").then(() => {
+  createRoot(document.getElementById("root")!).render(<TodoModule />);
+});

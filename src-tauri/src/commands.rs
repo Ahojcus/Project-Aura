@@ -96,6 +96,40 @@ fn resolve_monitor(app: &AppHandle, monitor: Option<(i32, i32)>) -> Option<tauri
     prim
 }
 
+/// Base module of a window label; per-display duplicates are `module_x_y`.
+fn base_label(label: &str) -> &str {
+    for base in ["wallpaper", "notch", "clock", "todo", "statusbar"] {
+        if label == base {
+            return base;
+        }
+        if let Some(rest) = label.strip_prefix(base).and_then(|r| r.strip_prefix('_')) {
+            let parts: Vec<&str> = rest.split('_').collect();
+            if parts.len() == 2
+                && parts[0].parse::<i32>().is_ok()
+                && parts[1].parse::<i32>().is_ok()
+            {
+                return base;
+            }
+        }
+    }
+    label
+}
+
+/// Display origin encoded in a duplicate window label (`clock_-1920_0`).
+fn label_monitor(label: &str) -> Option<(i32, i32)> {
+    for base in ["wallpaper", "notch", "clock", "todo", "statusbar"] {
+        if let Some(rest) = label.strip_prefix(base).and_then(|r| r.strip_prefix('_')) {
+            let parts: Vec<&str> = rest.split('_').collect();
+            if parts.len() == 2 {
+                if let (Ok(x), Ok(y)) = (parts[0].parse::<i32>(), parts[1].parse::<i32>()) {
+                    return Some((x, y));
+                }
+            }
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------------------
 // Settings window + module windows
 // ---------------------------------------------------------------------------
@@ -122,9 +156,23 @@ fn show_settings(app: &AppHandle) {
     }
 }
 
-/// Show/hide one of the module overlay windows. The wallpaper window also gets
-/// embedded behind the desktop icons when shown. `x`/`y` (logical px) override
-/// the automatic placement when both are provided.
+/// Reveal a wallpaper webview as an actual desktop backdrop. Keeping it as a
+/// normal bottom-most top-level window makes Win+D hide it; reparenting the
+/// WebView2 HWND into Explorer's Progman/WorkerW keeps it behind the icons and
+/// out of the Show Desktop stack, like Lively.
+#[cfg(windows)]
+fn show_wallpaper_backdrop(window: &tauri::WebviewWindow) {
+    if let Some(hwnd) = hwnd_of(window) {
+        let _ = crate::wallpaper_win::set_embedded(hwnd, true);
+        crate::wallpaper_win::show_bottom_async(hwnd.0 as isize);
+    }
+}
+
+#[cfg(not(windows))]
+fn show_wallpaper_backdrop(_window: &tauri::WebviewWindow) {}
+
+/// Show/hide one of the module overlay windows. The wallpaper is revealed with
+/// non-blocking native window calls; other modules use Tauri positioning.
 #[tauri::command]
 pub fn set_module_visible(
     app: AppHandle,
@@ -134,68 +182,150 @@ pub fn set_module_visible(
     y: Option<f64>,
     monitor: Option<(i32, i32)>,
 ) {
+    if base_label(&label) == "wallpaper" {
+        set_wallpaper_desired(&label, visible);
+        #[cfg(windows)]
+        if visible {
+            if let Some(w) = app.get_webview_window(&label) {
+                show_wallpaper_backdrop(&w);
+            }
+            // WebView2 may not have a usable top-level handle during the first
+            // settings-sync pass. Re-query for a short interval instead of
+            // keeping a handle that was never ready.
+            let app_retry = app.clone();
+            let label_retry = label.clone();
+            std::thread::spawn(move || {
+                for _ in 0..20 {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    if !wallpaper_should_show(&label_retry) {
+                        return;
+                    }
+                    if let Some(w) = app_retry.get_webview_window(&label_retry) {
+                        if hwnd_of(&w).is_some() {
+                            show_wallpaper_backdrop(&w);
+                            return;
+                        }
+                    }
+                }
+            });
+        } else if let Some(w) = app.get_webview_window(&label) {
+            if let Some(hwnd) = hwnd_of(&w) {
+                crate::wallpaper_win::hide_async(hwnd.0 as isize);
+            }
+        }
+        return;
+    }
+
     let Some(window) = app.get_webview_window(&label) else {
         return;
     };
-    let is_wallpaper = label == "wallpaper";
     let target = resolve_monitor(&app, monitor);
     if visible {
-        if is_wallpaper {
-            // The wallpaper fills its chosen display.
-            if let Some(mon) = target.as_ref() {
-                let _ = window.set_size(tauri::PhysicalSize::new(mon.size().width.max(1), mon.size().height.max(1)));
-                let _ = window.set_position(tauri::PhysicalPosition::new(mon.position().x, mon.position().y));
-            }
-        } else {
-            match (x, y) {
-                (Some(x), Some(y)) => {
-                    if let Some(mon) = target.as_ref() {
-                        // Manual coordinates are logical px *within the chosen display*.
-                        let scale = mon.scale_factor();
-                        let _ = window.set_position(tauri::PhysicalPosition::new(
-                            mon.position().x + (x * scale).round() as i32,
-                            mon.position().y + (y * scale).round() as i32,
-                        ));
-                    }
+        match (x, y) {
+            (Some(x), Some(y)) => {
+                if let Some(mon) = target.as_ref() {
+                    // Manual coordinates are logical px within the chosen display.
+                    let scale = mon.scale_factor();
+                    let _ = window.set_position(tauri::PhysicalPosition::new(
+                        mon.position().x + (x * scale).round() as i32,
+                        mon.position().y + (y * scale).round() as i32,
+                    ));
                 }
-                _ => {
-                    if let Some(mon) = target.as_ref() {
-                        position_module_window(&app, &label, &window, mon);
-                    }
+            }
+            _ => {
+                if let Some(mon) = target.as_ref() {
+                    position_module_window(&app, &label, &window, mon);
                 }
             }
         }
         let _ = window.show();
-        if is_wallpaper {
-            let handle = app.clone();
-            let window = window.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(350));
-                let _ = window.show();
-                let ok = wallpaper_embed(&handle, true);
-                if !ok {
-                    // Fallback: keep it as a normal skipped-taskbar window.
-                    let _ = window.show();
-                }
-            });
+        // Re-reveal must not reshuffle the stack: re-apply the module's
+        // remembered level, then restack its whole band so the sidebar
+        // priority (not activation recency) decides who is on top.
+        let lv = levels().lock().unwrap().get(&label).cloned();
+        if let Some(l) = lv {
+            apply_level(&app, &window, &l);
+            if matches!(l.as_str(), "topmost" | "bottommost") {
+                band_restack(&app, &l, &order_locked().lock().unwrap().clone());
+            }
         }
     } else {
-        if is_wallpaper {
-            let _ = wallpaper_embed(&app, false);
-        }
         let _ = window.hide();
+    }
+    // Per-display duplicates follow the main window's visibility.
+    if base_label(&label) == label.as_str() {
+        sync_module_visibility(&app, &label, visible);
     }
 }
 
-/// Reposition the notch/clock/todo windows nicely *within the given display*
-/// (idempotent; keeps their logical sizes from tauri.conf.json).
+/// Clip a module window to its visible widget rectangle. Transparent pixels in
+/// a Tauri window still hit-test as that window on Windows, so the empty shadow
+/// margin around a widget was stealing clicks from apps underneath it.
+///
+/// The region is deliberately rectangular: Windows regions are binary, so a
+/// rounded region would cut the CSS `border-radius` with a jagged stair-step.
+/// Leaving the region square keeps the visible rounded corners anti-aliased by
+/// the WebView, while still dropping the large transparent shadow margin.
+#[cfg(windows)]
+#[tauri::command]
+pub fn module_set_hit_region(
+    app: AppHandle,
+    label: String,
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    _radius: f64,
+) {
+    use windows::Win32::Graphics::Gdi::{CreateRectRgn, SetWindowRgn};
+
+    let Some(window) = app.get_webview_window(&label) else { return };
+    let Some(hwnd) = hwnd_of(&window) else { return };
+    let size = window.inner_size().ok();
+    let win_w = size.map(|s| s.width as i32).unwrap_or(width.max(1));
+    let win_h = size.map(|s| s.height as i32).unwrap_or(height.max(1));
+    if win_w <= 1 || win_h <= 1 || width <= 0 || height <= 0 {
+        return;
+    }
+
+    // The frontend reports CSS pixels; window regions use physical pixels.
+    let x1 = x.clamp(0, win_w - 1);
+    let y1 = y.clamp(0, win_h - 1);
+    let x2 = (x.saturating_add(width)).clamp(x1 + 1, win_w);
+    let y2 = (y.saturating_add(height)).clamp(y1 + 1, win_h);
+
+    unsafe {
+        let region = CreateRectRgn(x1, y1, x2, y2);
+        let _ = SetWindowRgn(hwnd, region, windows::Win32::Foundation::BOOL(1));
+    }
+}
+
+#[cfg(not(windows))]
+#[tauri::command]
+pub fn module_set_hit_region(
+    _app: AppHandle,
+    _label: String,
+    _x: i32,
+    _y: i32,
+    _width: i32,
+    _height: i32,
+    _radius: f64,
+) {
+}
+
+/// Reposition the clock/todo windows nicely *within the given display*
+/// (idempotent; keeps their logical sizes from tauri.conf.json). Notch and
+/// statusbar geometry is owned by their layout commands.
 fn position_module_window(
     _app: &AppHandle,
     label: &str,
     window: &tauri::WebviewWindow,
     monitor: &tauri::Monitor,
 ) {
-    if !matches!(label, "notch" | "clock" | "todo" | "start") {
+    // The notch and status bar own their geometry through their layout
+    // commands (edge placement, length, thickness, insets, hotplug). Showing
+    // them must never overwrite that exact layout with a generic guess.
+    if !matches!(label, "clock" | "todo" | "start") {
         return;
     }
     let size = monitor.size();
@@ -208,10 +338,6 @@ fn position_module_window(
             let ww = window.outer_size().map(|s| s.width as f64).unwrap_or(688.0 * scale);
             let wh = window.outer_size().map(|s| s.height as f64).unwrap_or(588.0 * scale);
             (mx + ((w - ww) / 2.0).max(0.0), my + ((h - wh) * 0.30).max(0.0))
-        }
-        "notch" => {
-            let notch_w = window.outer_size().map(|s| s.width as f64).unwrap_or(240.0);
-            (mx + (w - notch_w) / 2.0, my)
         }
         "clock" => (mx + (w - 458.0 * scale).max(0.0), my + ((46.0 - 64.0) * scale).max(0.0)),
         "todo" => (mx + ((46.0 - 64.0) * scale).max(0.0), my + (h - 630.0 * scale).max(0.0)),
@@ -243,7 +369,16 @@ pub fn window_apply(
     click_through: Option<bool>,
     capacity: Option<(f64, f64)>,
     monitor: Option<(i32, i32)>,
+    // The Settings sidebar's module stack priorities (TOPMOST-first). When a
+    // band change happens, same-level modules are restacked so priority #1
+    // truly draws above the others instead of activation recency deciding.
+    order: Option<Vec<String>>,
 ) {
+    // Never run native stacking or monitor lookups for wallpaper windows on
+    // the startup path. They deadlock the event loop on this Windows setup.
+    if label == "wallpaper" || label.starts_with("wallpaper_") {
+        return;
+    }
     let Some(w) = app.get_webview_window(&label) else { return };
 
     if let Some(l) = level {
@@ -252,9 +387,23 @@ pub fn window_apply(
         // stored configuration says — apps must never end up behind it.
         let forced = label == "wallpaper" || label.starts_with("wallpaper_");
         apply_level(&app, &w, if forced { "bottommost" } else { &l });
+        // Remember each module's level + the shared priority list so a later
+        // module reveal (set_module_visible) keeps the same stacking.
+        if !forced {
+            levels().lock().unwrap().insert(label.clone(), l.clone());
+        }
+        if let Some(o) = order {
+            if o.len() > 1 {
+                *order_locked().lock().unwrap() = o;
+            }
+        }
+        if !forced && matches!(l.as_str(), "topmost" | "bottommost") {
+            band_restack(&app, &l, &order_locked().lock().unwrap().clone());
+        }
     }
+    let target_monitor = resolve_monitor(&app, monitor);
     if let (Some(x), Some(y)) = (x, y) {
-        if let Some(mon) = resolve_monitor(&app, monitor) {
+        if let Some(mon) = target_monitor.as_ref() {
             // Manual coordinates are logical px within the chosen display.
             let scale = mon.scale_factor();
             let _ = w.set_position(tauri::PhysicalPosition::new(
@@ -262,24 +411,35 @@ pub fn window_apply(
                 mon.position().y + (y * scale).round() as i32,
             ));
         }
+    } else if let Some(mon) = target_monitor.as_ref() {
+        // A saved monitor with no manual X/Y still has to be restored. The
+        // generic window_apply path used to ignore monitor-only settings, so
+        // clock/todo fell back to their primary-display startup position after
+        // every restart.
+        position_module_window(&app, &label, &w, mon);
     }
     if label == "wallpaper" || label.starts_with("wallpaper_") {
-        // The wallpaper is never interactive — a wallpaper that takes mouse
-        // input can be clicked or dragged, and a dragged/moved wallpaper pops
-        // out of its z-order slot and covers the windows underneath. Ignore
-        // any click-through value that would re-enable input on it.
-        let _ = w.set_ignore_cursor_events(true);
-        let _ = w.set_focusable(false);
+        // The wallpaper is never interactive; WS_EX_TRANSPARENT/NOACTIVATE is
+        // applied natively in ensure_backdrop. Avoid the WebView2 focus and
+        // cursor APIs here because they can block the window thread while the
+        // window is hidden during startup.
     } else if let Some(ct) = click_through {
         let _ = w.set_ignore_cursor_events(ct);
         let _ = w.set_focusable(!ct);
     }
     if let Some((ws, hs)) = capacity {
-        if let Some((_, dw, dh)) = DEFAULT_SIZES.iter().find(|(l, _, _)| *l == label) {
-            let _ = w.set_size(tauri::LogicalSize::new(
-                (dw * ws.clamp(0.4, 2.0)).round(),
-                (dh * hs.clamp(0.4, 2.0)).round(),
-            ));
+        let base = base_label(&label);
+        if let Some((_, dw, dh)) = DEFAULT_SIZES.iter().find(|(l, _, _)| *l == base) {
+            let nw = (dw * ws.clamp(0.4, 2.0)).round();
+            let nh = (dh * hs.clamp(0.4, 2.0)).round();
+            let _ = w.set_size(tauri::LogicalSize::new(nw, nh));
+            // A resized duplicate must stay anchored inside its own display.
+            if let Some((mx, my)) = label_monitor(&label) {
+                if let Some(mon) = resolve_monitor(&app, Some((mx, my))) {
+                    let (px, py) = duplicate_anchor(base, &mon, nw, nh);
+                    let _ = w.set_position(tauri::PhysicalPosition::new(px, py));
+                }
+            }
         }
     }
 }
@@ -294,29 +454,37 @@ fn is_wallpaper_window(app: &AppHandle, window: &tauri::WebviewWindow) -> bool {
         .any(|(l, w)| l.starts_with("wallpaper_") && w == window)
 }
 
+
 fn apply_level(app: &AppHandle, window: &tauri::WebviewWindow, level: &str) {
     match level {
         "topmost" => {
             if is_wallpaper_window(app, window) {
-                let _ = wallpaper_embed(app, false);
+                // A wallpaper can never be topmost — that paints it over the
+                // taskbar. Any topmost request collapses to its true bottom:
+                // embedded behind the desktop icons (or pinned, if embedding
+                // fails on this machine).
+                let _ = window.set_always_on_top(false);
+                return;
             }
             let _ = window.set_always_on_top(true);
+            #[cfg(windows)]
+            set_noactivate(window, false);
         }
         "normal" => {
             let is_wallpaper = is_wallpaper_window(app, window);
-            if is_wallpaper {
-                let _ = wallpaper_embed(app, false);
-            }
             let _ = window.set_always_on_top(false);
+            #[cfg(windows)]
+            if !is_wallpaper {
+                set_noactivate(window, false);
+                // Tauri's wrapper alone can leave the HWND in the topmost
+                // band on Windows; explicitly clear WS_EX_TOPMOST and move it
+                // back to the normal band so it stops floating over apps.
+                clear_topmost(window);
+            }
             // A plain "normal" wallpaper would sit wherever Windows drops it —
             // potentially above open windows. Pin it to the bottom of the
-            // normal band instead so it never covers apps.
-            if is_wallpaper {
-                #[cfg(windows)]
-                pin_to_bottom(window);
-                #[cfg(not(windows))]
-                let _ = window;
-            }
+            // normal band instead so it never covers apps. The async helper
+            // does that after unembedding, so this never blocks the event loop.
         }
         "bottommost" => {
             // The wallpaper is special-cased: embedding behind the desktop
@@ -324,12 +492,10 @@ fn apply_level(app: &AppHandle, window: &tauri::WebviewWindow, level: &str) {
             // the window stack.
             if is_wallpaper_window(app, window) {
                 let _ = window.set_always_on_top(false);
-                let label = window.label().to_string();
-                let _ = wallpaper_embed_label(app, &label, true);
                 return;
             }
             #[cfg(windows)]
-            pin_to_bottom(window);
+            pin_to_bottom(window, false);
             #[cfg(not(windows))]
             let _ = window.set_always_on_top(false);
         }
@@ -337,44 +503,243 @@ fn apply_level(app: &AppHandle, window: &tauri::WebviewWindow, level: &str) {
     }
 }
 
+/// A click on a bottom-band module panel (to-do, clock, statusbar…) activates
+/// the window — and Windows always raises the activated window above every
+/// other normal window, so panels visually climbed over apps. The panels must
+/// stay click-selectable (and typable), so on every Focus we re-apply the
+/// module's band: the window returns to its z-band with SWP_NOACTIVATE while
+/// keeping foreground/keyboard focus — clicks still land, inputs still type,
+/// it just never stays drawn on top.
+pub fn window_focus_restack(app: &AppHandle, label: &str) {
+    let Some(level) = levels().lock().unwrap().get(label).cloned() else {
+        return;
+    };
+    if !matches!(level.as_str(), "bottommost") {
+        return;
+    }
+    // A per-display duplicate is not part of the shared band order; sink it
+    // directly into the bottom band when it is activated.
+    #[cfg(windows)]
+    if label_monitor(label).is_some() {
+        if let Some(window) = app.get_webview_window(label) {
+            pin_to_bottom(&window, false);
+        }
+        return;
+    }
+    #[cfg(windows)]
+    band_restack(app, "bottommost", &order_locked().lock().unwrap().clone());
+    #[cfg(not(windows))]
+    let _ = app.get_webview_window(label).map(|w| w.set_always_on_top(false));
+}
+
 /// Push the window to the very bottom of the z-stack (just above the desktop
-/// background) and prevent it from stealing focus.
+/// background). When `noactivate` is true the window also ignores activation
+/// clicks — meant ONLY for wallpapers, which must never take focus. Interactive
+/// modules (to-do, clock, statusbar…) must keep activation: without it a click
+/// never activates the window and none of its inputs can ever receive typing.
 #[cfg(windows)]
-fn pin_to_bottom(window: &tauri::WebviewWindow) {
+fn clear_topmost(window: &tauri::WebviewWindow) {
     use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{
-        SetWindowPos, HWND_BOTTOM, SET_WINDOW_POS_FLAGS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-        SWP_NOZORDER,
+        GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_NOTOPMOST,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, WS_EX_TOPMOST,
     };
-    use windows::Win32::UI::WindowsAndMessaging::SetWindowLongPtrW;
-    use windows::Win32::UI::WindowsAndMessaging::GWL_EXSTYLE;
-    use windows::Win32::UI::WindowsAndMessaging::WS_EX_NOACTIVATE;
 
-    let _ = window.set_always_on_top(false);
     let Some(hwnd) = hwnd_of(window) else { return };
     unsafe {
-        // Keep it unresponsive to activation clicks while pinned to the bottom.
-        let _ = SetWindowLongPtrW(
-            HWND(hwnd.0),
-            GWL_EXSTYLE,
-            (GetWindowLongPtrW(HWND(hwnd.0), GWL_EXSTYLE) | WS_EX_NOACTIVATE.0 as isize) as _,
-        );
+        let ex = GetWindowLongPtrW(HWND(hwnd.0), GWL_EXSTYLE);
+        if ex & (WS_EX_TOPMOST.0 as isize) != 0 {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & !(WS_EX_TOPMOST.0 as isize));
+        }
         let _ = SetWindowPos(
-            HWND(hwnd.0),
-            HWND_BOTTOM,
+            hwnd,
+            HWND_NOTOPMOST,
             0,
             0,
             0,
             0,
-            SET_WINDOW_POS_FLAGS(
-                (SWP_NOMOVE.0 | SWP_NOSIZE.0 | SWP_NOACTIVATE.0 | SWP_NOZORDER.0) as u32,
-            ),
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
+        );
+    }
+}
+
+/// Place a top-level module in the band directly above the desktop, but below
+/// every normal application. `HWND_BOTTOM` is too low: it drops the window
+/// behind Progman/WorkerW, so the wallpaper hides it (and the whole bottommost
+/// band disappears). Instead insert it after the nearest non-topmost window
+/// above Progman; if there is none, put it at the top of the normal band.
+#[cfg(windows)]
+fn place_in_bottom_band(hwnd: windows::Win32::Foundation::HWND) {
+    use windows::core::{PCWSTR, w};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, GetWindow, GetWindowLongPtrW, SetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE,
+        GW_HWNDPREV, HWND_TOP, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOMOVE, SWP_NOSIZE,
+        WS_EX_TOPMOST,
+    };
+
+    unsafe {
+        let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+        if ex & (WS_EX_TOPMOST.0 as isize) != 0 {
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & !(WS_EX_TOPMOST.0 as isize));
+        }
+
+        let progman = FindWindowW(w!("Progman"), PCWSTR::null()).ok();
+        let mut anchor = progman
+            .map(|desktop| GetWindow(desktop, GW_HWNDPREV).unwrap_or_default())
+            .unwrap_or_default();
+        // The taskbar and other topmost windows are above the normal band.
+        // Walk past them to the nearest ordinary window above Progman.
+        while !anchor.0.is_null() {
+            let anchor_ex = GetWindowLongPtrW(anchor, GWL_EXSTYLE);
+            if anchor_ex & (WS_EX_TOPMOST.0 as isize) == 0 {
+                break;
+            }
+            anchor = GetWindow(anchor, GW_HWNDPREV).unwrap_or_default();
+        }
+
+        let insert = if anchor.0.is_null() { HWND_TOP } else { anchor };
+        let _ = SetWindowPos(
+            hwnd,
+            insert,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER,
         );
     }
 }
 
 #[cfg(windows)]
-use windows::Win32::UI::WindowsAndMessaging::GetWindowLongPtrW;
+fn pin_to_bottom(window: &tauri::WebviewWindow, noactivate: bool) {
+    use windows::Win32::Foundation::HWND;
+    let _ = window.set_always_on_top(false);
+    let Some(hwnd) = hwnd_of(window) else { return };
+    set_noactivate(window, noactivate);
+    place_in_bottom_band(HWND(hwnd.0));
+}
+
+/// Set/unset `WS_EX_NOACTIVATE` on the window's hwnd (no-op off Windows).
+/// This is what makes a click on a module activate it (or not) — the to-do
+/// input typability bug came from having it stuck on interactive windows.
+#[cfg(windows)]
+fn set_noactivate(window: &tauri::WebviewWindow, on: bool) {
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_NOACTIVATE,
+    };
+    let Some(hwnd) = hwnd_of(window) else { return };
+    unsafe {
+        let ex = GetWindowLongPtrW(HWND(hwnd.0), GWL_EXSTYLE);
+        let want = if on {
+            ex | WS_EX_NOACTIVATE.0 as isize
+        } else {
+            ex & !(WS_EX_NOACTIVATE.0 as isize)
+        };
+        if want != ex {
+            let _ = SetWindowLongPtrW(HWND(hwnd.0), GWL_EXSTYLE, want);
+        }
+    }
+}
+
+/// The module stack priorities from the Settings sidebar (TOPMOST-first).
+static MODULE_ORDER: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// Each module's currently applied layer level ("topmost"/"normal"/…).
+/// Lazily initialized — a allocating `HashMap::new()` can't run in a static.
+static MODULE_LEVELS_CELL: std::sync::OnceLock<Mutex<std::collections::HashMap<String, String>>> =
+    std::sync::OnceLock::new();
+
+fn order_locked() -> &'static Mutex<Vec<String>> {
+    &MODULE_ORDER
+}
+
+fn levels() -> &'static Mutex<std::collections::HashMap<String, String>> {
+    MODULE_LEVELS_CELL.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Last requested visibility for each wallpaper window. Delayed show threads
+/// must consult this so a fast hide is not undone 350ms later.
+static WALLPAPER_VISIBILITY_CELL: std::sync::OnceLock<Mutex<std::collections::HashMap<String, bool>>> =
+    std::sync::OnceLock::new();
+
+fn wallpaper_visibility() -> &'static Mutex<std::collections::HashMap<String, bool>> {
+    WALLPAPER_VISIBILITY_CELL.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn set_wallpaper_desired(label: &str, visible: bool) {
+    if let Ok(mut desired) = wallpaper_visibility().lock() {
+        desired.insert(label.to_string(), visible);
+    }
+}
+
+fn wallpaper_should_show(label: &str) -> bool {
+    wallpaper_visibility()
+        .lock()
+        .ok()
+        .and_then(|desired| desired.get(label).copied())
+        .unwrap_or(false)
+}
+
+/// Deterministic ordering for module windows that share a z-band: when two
+/// modules are e.g. both "topmost" or both "bottommost", Windows would
+/// otherwise let activation recency decide who is on top — the modules keep
+/// stealing the top slot from each other and it visibly bugs out. The
+/// Settings sidebar's priority list (TOPMOST-first) is authoritative instead.
+#[cfg(windows)]
+fn band_restack(app: &AppHandle, level: &str, order: &[String]) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOOWNERZORDER, SWP_NOMOVE, SWP_NOSIZE, SetWindowPos,
+    };
+
+    let bottom_band = level == "bottommost";
+    // Only move modules that are actually assigned to this band. Re-applying
+    // the band to every module in the sidebar order made one topmost/ bottommost
+    // change pull all the normal modules into the same band, so the per-module
+    // Layer setting appeared to do nothing.
+    let levels_by_label = levels().lock().unwrap().clone();
+    let in_band = |label: &String| {
+        levels_by_label
+            .get(label)
+            .is_some_and(|assigned| assigned == level)
+    };
+    // A HWND_TOPMOST call puts its target on top of the band → process
+    // lowest priority first so the highest-priority window is placed last
+    // (and therefore stays above the others). The bottom band is placed just
+    // above the desktop for each member, so process in priority order.
+    let iter: Box<dyn Iterator<Item = &String>> = if level == "topmost" {
+        Box::new(order.iter().rev())
+    } else {
+        Box::new(order.iter())
+    };
+
+    for label in iter.filter(|label| in_band(label)) {
+        if label == "wallpaper" || label.starts_with("wallpaper_") {
+            continue; // embedded behind the desktop icons, managed elsewhere
+        }
+        let Some(w) = app.get_webview_window(label) else { continue };
+        let Some(hwnd) = hwnd_of(&w) else { continue };
+        if bottom_band {
+            place_in_bottom_band(hwnd);
+        } else {
+            unsafe {
+                let _ = SetWindowPos(
+                    hwnd,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    windows::Win32::UI::WindowsAndMessaging::SET_WINDOW_POS_FLAGS(
+                        (SWP_NOMOVE.0 | SWP_NOSIZE.0 | SWP_NOACTIVATE.0 | SWP_NOOWNERZORDER.0) as u32,
+                    ),
+                );
+            }
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn band_restack(_app: &AppHandle, _level: &str, _order: &[String]) {}
 
 /// Apply the notch's user-configurable layout (free-tier feature parity with
 /// the Store "Smart Notch"): notch-or-bar shape, placement along screen
@@ -400,43 +765,51 @@ pub fn notch_apply_layout(
     // Rolling-out tween step: outright width override the frontend animates
     // through (the final frame of a tween omits it for exact geometry).
     fit_width: Option<f64>,
+    // Duplicate windows pass their own label; the encoded display origin wins
+    // over the shared settings monitor.
+    label: Option<String>,
 ) {
-    let Some(w) = app.get_webview_window("notch") else { return };
+    let label = label.unwrap_or_else(|| "notch".to_string());
+    let Some(w) = app.get_webview_window(&label) else { return };
+    // The Smart Notch is a transparent, fully rounded pill. On Windows the
+    // native window shadow is a rectangular DWM glow around the whole HWND,
+    // not around the CSS shape; keep it disabled even after the window is
+    // resized by the layout command.
+    let _ = w.set_shadow(false);
+    let monitor = label_monitor(&label).or(monitor);
     let Some(monitor) = resolve_monitor(&app, monitor) else { return };
     let scale = monitor.scale_factor() as f64;
     let sw = monitor.size().width as f64 / scale;
     let sh = monitor.size().height as f64 / scale;
 
+    let _ = (content_height, collapsed_width, fit_width);
     let is_bar = layout == "bar";
     let thickness = thickness.clamp(30.0, 96.0);
-    // The bar strip is always as wide as the panel it opens (the icon tabs +
-    // status chips don't fit a narrower pill), so both states share a width.
-    let full_width = if is_bar {
+    // Fixed footprint: the configured length/thickness own the window size.
+    // Content changes (media titles, timer chips) must never resize it.
+    let width = if is_bar {
         sw * (length / 100.0).clamp(0.25, 1.0)
     } else {
-        660.0f64.max(length.clamp(160.0, sw * 0.8))
+        // Keep the user's length but give the pill enough room for its status
+        // chips plus a readable media title. Below ~320px the title is reduced
+        // to a single character even though the other labels are fixed-size.
+        let collapsed = length.clamp(320.0, sw * 0.8);
+        // Expand the same pill into a usable menu width; the configured length
+        // only describes the collapsed state. 560px fits two widget columns.
+        if expanded {
+            collapsed.max(560.0).min(sw * 0.92)
+        } else {
+            collapsed
+        }
     };
-    // Collapsed (any layout): shrink to the measured compact pill. Expanded,
-    // or no measurement yet: full width.
-    let mut width = if !expanded {
-        collapsed_width
-            .map(|w| w.max(150.0).min(sw * 0.9))
-            .unwrap_or(full_width)
+    // Opening the panel uses a fixed height; the panel scrolls if the enabled
+    // widgets need more room. This still stays inside 92% of the screen.
+    let height = if expanded {
+        (thickness + 286.0).min(sh * 0.92)
     } else {
-        full_width
+        thickness
     };
-    // Tween frames override the width outright; safe clamps on both ends.
-    if let Some(over) = fit_width {
-        width = over.max(150.0).min(sw * 0.9);
-    }
-    let (width, height) = if expanded {
-        let content = content_height.unwrap_or(286.0).max(140.0);
-        // Bar strip (thickness) + measured panel content, never taller than
-        // 92% of the screen so widgets stay reachable.
-        (width.round(), (thickness + content).min(sh * 0.92).round())
-    } else {
-        (width.round(), thickness)
-    };
+    let (width, height) = (width.round(), height.round());
 
     // Anchor edges/corners keep a small breathing 8px margin from the edge.
     let margin = 8.0;
@@ -465,6 +838,76 @@ pub fn notch_apply_layout(
     let _ = w.set_size(tauri::LogicalSize::new(width, height));
     let _ = w.set_position(tauri::PhysicalPosition::new(
         monitor.position().x + (x * scale).round() as i32,
+        monitor.position().y + (y * scale).round() as i32,
+    ));
+}
+
+// ---------------------------------------------------------------------------
+// Status bar (YASB-style module) — a full-width edge strip with system /
+// media / clock chips. Geometry is owned by the bar itself: top or bottom
+// edge, thickness and side insets.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn statusbar_apply_layout(
+    app: AppHandle,
+    placement: String,
+    thickness: f64,
+    inset: f64,
+    monitor: Option<(i32, i32)>,
+    label: Option<String>,
+    reserve_edge: Option<bool>,
+) {
+    let label = label.unwrap_or_else(|| "statusbar".to_string());
+    let Some(w) = app.get_webview_window(&label) else { return };
+    let monitor = label_monitor(&label).or(monitor);
+    let Some(monitor) = resolve_monitor(&app, monitor) else { return };
+    let scale = monitor.scale_factor() as f64;
+    let sw = monitor.size().width as f64 / scale;
+    let sh = monitor.size().height as f64 / scale;
+
+    let thickness = thickness.clamp(24.0, 96.0);
+    // Edge-to-edge by default; the inset sidebar look keeps the bar usable.
+    let inset = inset.clamp(0.0, ((sw - 240.0) / 2.0).max(0.0));
+    let width = (sw - 2.0 * inset).max(240.0);
+    let hwnd = hwnd_of(&w).map(|h| h.0 as isize);
+
+    // Register the bar as an AppBar so Explorer shrinks the desktop work area
+    // instead of letting maximized windows cover it. Fullscreen-hidden and
+    // disabled bars release the edge so games/apps can use the whole display.
+    let reserved = if reserve_edge.unwrap_or(false) {
+        hwnd.and_then(|h| {
+            crate::appbar::reserve(
+                h,
+                &placement,
+                monitor.position().x,
+                monitor.position().y,
+                monitor.size().width as i32,
+                monitor.size().height as i32,
+                (thickness * scale).round() as i32,
+            )
+        })
+    } else {
+        if let Some(h) = hwnd {
+            crate::appbar::release(h);
+        }
+        None
+    };
+
+    let (y, height) = if let Some((_left, top, _right, bottom)) = reserved {
+        (
+            ((top - monitor.position().y) as f64 / scale).max(0.0),
+            ((bottom - top) as f64 / scale).max(1.0),
+        )
+    } else if placement == "bottom" {
+        ((sh - thickness).max(0.0), thickness)
+    } else {
+        (0.0, thickness)
+    };
+
+    let _ = w.set_size(tauri::LogicalSize::new(width.round(), height.round()));
+    let _ = w.set_position(tauri::PhysicalPosition::new(
+        monitor.position().x + (inset * scale).round() as i32,
         monitor.position().y + (y * scale).round() as i32,
     ));
 }
@@ -523,6 +966,78 @@ pub fn get_bluetooth_battery(state: State<'_, crate::bluetooth::BtList>) -> Vec<
 #[cfg(not(windows))]
 pub fn get_bluetooth_battery() -> Vec<crate::bluetooth::BtDevice> {
     Vec::new()
+}
+
+// ---------------------------------------------------------------------------
+// Smart Notch extensions: volume mixer, downloads, cloak and edge light
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn get_audio_sessions() -> Vec<crate::audio::AudioSessionInfo> {
+    crate::audio::list_sessions()
+}
+
+#[tauri::command]
+pub fn set_audio_session(id: String, volume: Option<f32>, muted: Option<bool>) -> Result<(), String> {
+    crate::audio::set_session(&id, volume, muted)
+}
+
+#[tauri::command]
+pub fn get_downloads() -> Vec<crate::downloads::DownloadInfo> {
+    crate::downloads::list_downloads()
+}
+
+/// Hide or restore the non-notch overlays. The notch stays visible so the
+/// cloak can always be lifted from the same widget that enabled it.
+#[tauri::command]
+pub fn cloak_apply(app: AppHandle, active: bool, modules: Vec<String>) {
+    for label in ["clock", "todo", "statusbar"] {
+        let enabled = modules.iter().any(|module| module == label);
+        if let Some(window) = app.get_webview_window(label) {
+            if active {
+                let _ = window.hide();
+                #[cfg(windows)]
+                if label == "statusbar" {
+                    if let Some(hwnd) = hwnd_of(&window) {
+                        crate::appbar::release(hwnd.0 as isize);
+                    }
+                }
+            } else if enabled {
+                let _ = window.show();
+                let level = levels().lock().unwrap().get(label).cloned();
+                if let Some(level) = level {
+                    apply_level(&app, &window, &level);
+                }
+            }
+        }
+        sync_module_visibility(&app, label, !active && enabled);
+    }
+}
+
+/// Show or hide the click-through edge-glow overlay on the requested display.
+#[tauri::command]
+pub fn edge_light_apply(app: AppHandle, active: bool, monitor: Option<(i32, i32)>) {
+    let Some(window) = app.get_webview_window("edgelight") else {
+        return;
+    };
+    let _ = window.set_ignore_cursor_events(true);
+    let _ = window.set_focusable(false);
+    let _ = window.set_shadow(false);
+    if !active {
+        let _ = window.hide();
+        return;
+    }
+    let Some(target) = resolve_monitor(&app, monitor) else {
+        return;
+    };
+    let size = target.size();
+    let _ = window.set_size(tauri::PhysicalSize::new(size.width.max(1), size.height.max(1)));
+    let _ = window.set_position(tauri::PhysicalPosition::new(
+        target.position().x,
+        target.position().y,
+    ));
+    let _ = window.set_always_on_top(true);
+    let _ = window.show();
 }
 
 /// Focus timer finished: play the system notification sound twice.
@@ -609,89 +1124,238 @@ fn wallpaper_display_label(x: i32, y: i32) -> String {
 ///
 /// Called by the main wallpaper page whenever the module is enabled or the
 /// per-display assignment changes. `visible = false` hides every extra.
+#[cfg(windows)]
+fn schedule_existing_wallpaper_show(app: AppHandle, label: String) {
+    std::thread::spawn(move || {
+        for _ in 0..50 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if !wallpaper_should_show(&label) {
+                return;
+            }
+            if let Some(window) = app.get_webview_window(&label) {
+                if hwnd_of(&window).is_some() {
+                    show_wallpaper_backdrop(&window);
+                    return;
+                }
+            }
+        }
+    });
+}
+
+#[cfg(not(windows))]
+fn schedule_existing_wallpaper_show(_app: AppHandle, _label: String) {}
+
+/// Show/hide the per-display wallpaper windows that were created during
+/// native setup. This command never builds windows or touches the desktop
+/// hierarchy, so it is safe to call from the settings-sync path.
 #[tauri::command]
 pub fn wallpaper_sync_displays(app: AppHandle, visible: bool, main_monitor: Option<(i32, i32)>) {
     let main_origin = resolve_monitor(&app, main_monitor).map(|m| (m.position().x, m.position().y));
-    // One entry per display the main window does NOT already fill.
-    let extras: Vec<(i32, i32, u32, u32)> = enumerate_monitors(&app)
+    let extras: Vec<(i32, i32)> = enumerate_monitors(&app)
         .into_iter()
         .filter(|m| Some((m.x, m.y)) != main_origin)
-        .map(|m| (m.x, m.y, m.width, m.height))
-        .collect();
-    let wanted: Vec<String> = extras
-        .iter()
-        .map(|(x, y, _, _)| wallpaper_display_label(*x, *y))
+        .map(|m| (m.x, m.y))
         .collect();
 
-    // Tear down extras whose display has moved away or gone missing.
-    let stale: Vec<tauri::WebviewWindow> = app
-        .webview_windows()
-        .into_iter()
-        .filter(|(label, _)| label.starts_with("wallpaper_") && !wanted.contains(label))
-        .map(|(_, w)| w)
-        .collect();
-    for w in stale {
-        let _ = w.close();
-    }
-
-    if visible {
-        let app2 = app.clone();
-        let extras = extras.clone();
-        let _ = app.run_on_main_thread(move || {
-            for (x, y, w, h) in extras.clone() {
-                let label = wallpaper_display_label(x, y);
-                if app2.get_webview_window(&label).is_some() {
-                    continue;
-                }
-                let builder = tauri::WebviewWindowBuilder::new(
-                    &app2,
-                    &label,
-                    tauri::WebviewUrl::App("wallpaper.html".into()),
-                )
-                .visible(false)
-                .decorations(false)
-                .transparent(true)
-                .skip_taskbar(true)
-                .resizable(false)
-                .shadow(false)
-                .focused(false)
-                .additional_browser_args(
-                    "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows",
-                );
-                if let Ok(win) = builder.build() {
-                    let _ = win.set_size(tauri::PhysicalSize::new(w.max(1), h.max(1)));
-                    let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
-                    // The wallpaper never takes mouse input or focus.
-                    let _ = win.set_ignore_cursor_events(true);
-                    let _ = win.set_focusable(false);
-                }
+    for (x, y) in &extras {
+        let label = wallpaper_display_label(*x, *y);
+        set_wallpaper_desired(&label, visible);
+        if visible {
+            if let Some(window) = app.get_webview_window(&label) {
+                show_wallpaper_backdrop(&window);
             }
-            // Give fresh windows a beat to load, then show + embed them all.
-            let handle = app2.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(400));
-                for (x, y, w, h) in extras {
-                    let label = wallpaper_display_label(x, y);
-                    if let Some(win) = handle.get_webview_window(&label) {
-                        let _ = win.set_size(tauri::PhysicalSize::new(w.max(1), h.max(1)));
-                        let _ = win.set_position(tauri::PhysicalPosition::new(x, y));
-                        let _ = win.show();
-                        if !wallpaper_embed_label(&handle, &label, true) {
-                            // Fallback: keep it as a normal skipped-taskbar window.
-                            let _ = win.show();
-                        }
-                    }
-                }
-            });
-        });
-    } else {
-        for label in wanted {
-            if let Some(win) = app.get_webview_window(&label) {
-                let _ = wallpaper_embed_label(&app, &label, false);
-                let _ = win.hide();
+            schedule_existing_wallpaper_show(app.clone(), label);
+        } else if let Some(window) = app.get_webview_window(&label) {
+            #[cfg(windows)]
+            if let Some(hwnd) = hwnd_of(&window) {
+                crate::wallpaper_win::hide_async(hwnd.0 as isize);
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Multiple displays — duplicate overlay modules onto more monitors
+// ---------------------------------------------------------------------------
+
+/// Logical default size used when a module is duplicated onto another display.
+/// The notch and statusbar resize themselves through their layout commands.
+fn module_default_size(module: &str) -> (f64, f64) {
+    match module {
+        "clock" => (360.0, 220.0),
+        "todo" => (420.0, 560.0),
+        "notch" => (240.0, 44.0),
+        "statusbar" => (1280.0, 40.0),
+        _ => (360.0, 220.0),
+    }
+}
+
+/// Anchor a duplicated module inside its own display: clock top-right, todo
+/// bottom-left, everything else at the origin (their layout command takes over).
+fn duplicate_anchor(module: &str, monitor: &tauri::Monitor, w: f64, h: f64) -> (i32, i32) {
+    let scale = monitor.scale_factor();
+    let sw = monitor.size().width as f64 / scale;
+    let sh = monitor.size().height as f64 / scale;
+    let margin = 24.0;
+    let (x, y) = match module {
+        "clock" => ((sw - w - margin).max(0.0), margin),
+        "todo" => (margin, (sh - h - margin).max(0.0)),
+        _ => (0.0, 0.0),
+    };
+    (
+        monitor.position().x + (x * scale).round() as i32,
+        monitor.position().y + (y * scale).round() as i32,
+    )
+}
+
+/// Every per-display duplicate window of `module` (labels `module_x_y`).
+fn duplicate_windows(app: &AppHandle, module: &str) -> Vec<tauri::WebviewWindow> {
+    let prefix = format!("{}_", module);
+    app.webview_windows()
+        .into_iter()
+        .filter(|(label, _)| label.starts_with(&prefix) && label_monitor(label).is_some())
+        .map(|(_, window)| window)
+        .collect()
+}
+
+/// Keep duplicated module windows in step with the main window's visibility.
+fn sync_module_visibility(app: &AppHandle, module: &str, visible: bool) {
+    for window in duplicate_windows(app, module) {
+        if visible {
+            let _ = window.show();
+            let level = levels().lock().unwrap().get(window.label()).cloned();
+            if let Some(level) = level {
+                apply_level(app, &window, &level);
+            }
+        } else {
+            let _ = window.hide();
+        }
+    }
+}
+
+/// Ensure one duplicate window per requested display, on that display's
+/// monitor, and remove duplicates whose display is gone or deselected.
+#[tauri::command]
+pub fn module_sync_displays(
+    app: AppHandle,
+    module: String,
+    visible: bool,
+    displays: Vec<(i32, i32)>,
+    main_monitor: Option<(i32, i32)>,
+    level: String,
+    click_through: bool,
+    capacity: (f64, f64),
+) {
+    if !matches!(module.as_str(), "clock" | "notch" | "todo" | "statusbar") {
+        return;
+    }
+    // Never duplicate a module over its own (main) display, and ignore saved
+    // origins for displays that are currently disconnected.
+    let main_origin = resolve_monitor(&app, main_monitor).map(|m| (m.position().x, m.position().y));
+    let connected: Vec<(i32, i32)> = enumerate_monitors(&app)
+        .into_iter()
+        .map(|m| (m.x, m.y))
+        .collect();
+    let displays: Vec<(i32, i32)> = displays
+        .into_iter()
+        .filter(|origin| Some(*origin) != main_origin && connected.contains(origin))
+        .collect();
+    let wanted: Vec<String> = displays
+        .iter()
+        .map(|(x, y)| format!("{}_{}_{}", module, x, y))
+        .collect();
+
+    // Drop duplicates whose display was disconnected or deselected.
+    let stale: Vec<tauri::WebviewWindow> = app
+        .webview_windows()
+        .into_iter()
+        .filter(|(label, _)| label.starts_with(&format!("{}_", module)) && !wanted.contains(label))
+        .map(|(_, window)| window)
+        .collect();
+    for window in stale {
+        let _ = window.close();
+    }
+
+    if !visible {
+        for (label, window) in app.webview_windows() {
+            if wanted.contains(&label) {
+                let _ = window.hide();
+            }
+        }
+        return;
+    }
+
+    let (base_w, base_h) = module_default_size(&module);
+    let cap_w = capacity.0.clamp(0.4, 2.0);
+    let cap_h = capacity.1.clamp(0.4, 2.0);
+    let app2 = app.clone();
+    let module2 = module.clone();
+    let level2 = level.clone();
+    let targets = displays.clone();
+    let _ = app.run_on_main_thread(move || {
+        for (x, y) in targets.clone() {
+            let label = format!("{}_{}_{}", module2, x, y);
+            let Some(monitor) = resolve_monitor(&app2, Some((x, y))) else {
+                continue;
+            };
+            let w = (base_w * cap_w).round();
+            let h = (base_h * cap_h).round();
+
+            if let Some(window) = app2.get_webview_window(&label) {
+                // Refresh an existing duplicate; notch/statusbar keep owning
+                // their own geometry through their layout command.
+                if matches!(module2.as_str(), "clock" | "todo") {
+                    let _ = window.set_size(tauri::LogicalSize::new(w, h));
+                    let (px, py) = duplicate_anchor(&module2, &monitor, w, h);
+                    let _ = window.set_position(tauri::PhysicalPosition::new(px, py));
+                }
+                let _ = window.set_ignore_cursor_events(click_through);
+                let _ = window.set_focusable(!click_through);
+                let _ = window.show();
+                apply_level(&app2, &window, &level2);
+                continue;
+            }
+
+            let (px, py) = duplicate_anchor(&module2, &monitor, w, h);
+            let builder = tauri::WebviewWindowBuilder::new(
+                &app2,
+                &label,
+                tauri::WebviewUrl::App(format!("{}.html", module2).into()),
+            )
+            .visible(false)
+            .decorations(false)
+            .transparent(true)
+            .skip_taskbar(true)
+            .resizable(false)
+            .shadow(false)
+            .focused(false)
+            .always_on_top(level2 == "topmost")
+            .additional_browser_args(
+                "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows",
+            );
+            if let Ok(window) = builder.build() {
+                let _ = window.set_size(tauri::LogicalSize::new(w, h));
+                let _ = window.set_position(tauri::PhysicalPosition::new(px, py));
+                let _ = window.set_ignore_cursor_events(click_through);
+                let _ = window.set_focusable(!click_through);
+            }
+        }
+
+        // Give freshly created webviews a beat to load, then reveal them.
+        let handle = app2.clone();
+        let module3 = module2.clone();
+        let level3 = level2.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(400));
+            for (x, y) in targets {
+                let label = format!("{}_{}_{}", module3, x, y);
+                if let Some(window) = handle.get_webview_window(&label) {
+                    let _ = window.show();
+                    apply_level(&handle, &window, &level3);
+                }
+            }
+        });
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -793,6 +1457,38 @@ pub fn get_system_info(state: State<'_, SysState>) -> Option<crate::monit::Syste
     state.snapshot.lock().ok()?.clone()
 }
 
+/// Lively-style “Pause wallpaper” policy (0 = off, 1 = maximized, 2 = fullscreen).
+/// Sent by the wallpaper webview whenever the setting changes; the pause
+/// watcher thread reads it and broadcasts transitions to the wallpaper pages.
+#[tauri::command]
+pub fn wallpaper_set_pause_mode(mode: u8) {
+    crate::monit::set_wallpaper_pause_mode(mode);
+}
+
+/// Pause the wallpaper while the machine runs on battery (Lively-style).
+#[tauri::command]
+pub fn wallpaper_set_battery_pause(enabled: bool) {
+    crate::monit::set_battery_pause(enabled);
+}
+
+/// Battery charge / AC state for the status bar's battery chip.
+#[tauri::command]
+pub fn get_power_status() -> crate::monit::PowerStatus {
+    crate::monit::power_status()
+}
+
+/// Foreground window title/class for the status bar's active-window chip.
+#[tauri::command]
+pub fn get_active_window() -> crate::monit::ActiveWindowInfo {
+    crate::monit::active_window_info()
+}
+
+/// Master output volume for the status bar's volume chip.
+#[tauri::command]
+pub fn get_master_volume() -> Option<crate::audio::MasterVolume> {
+    crate::audio::master_volume()
+}
+
 // ---------------------------------------------------------------------------
 // Global shortcut handler (Ctrl+Shift+, opens the settings panel)
 // ---------------------------------------------------------------------------
@@ -801,41 +1497,117 @@ pub fn get_system_info(state: State<'_, SysState>) -> Option<crate::monit::Syste
 // Start with Windows
 // ---------------------------------------------------------------------------
 
-/// Enable or disable launching Aura at Windows sign-in (autostart plugin manages
-/// the platform entry). Returns a message string on failure for the UI.
+/// Prefer the self-contained release build when this is the debug binary.
+/// The debug executable points at Vite's `devUrl`, so a Windows sign-in launch
+/// would show ERR_CONNECTION_REFUSED when no dev server is running.
+#[cfg(windows)]
+fn autostart_target_exe() -> std::path::PathBuf {
+    let current = std::env::current_exe().unwrap_or_default();
+    let is_aura_exe = current
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("aura.exe"));
+    let is_debug = current
+        .parent()
+        .and_then(|dir| dir.file_name())
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.eq_ignore_ascii_case("debug"));
+    if is_aura_exe && is_debug {
+        if let Some(release) = current.parent().and_then(|dir| dir.parent()).map(|dir| {
+            dir.join("release").join("aura.exe")
+        }) {
+            if release.is_file() {
+                return release;
+            }
+        }
+    }
+    current
+}
+
+const AUTOSTART_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+
+/// Set once the desktop shell and display topology from a sign-in launch have
+/// settled. Module pages wait for this before measuring or revealing anything.
+pub static STARTUP_READY: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+pub fn startup_is_ready() -> bool {
+    STARTUP_READY.load(Ordering::Relaxed)
+}
+
+/// Enable or disable launching Aura at Windows sign-in. On Windows the Run key
+/// is written directly so a debug build can register the release executable.
 #[tauri::command]
 pub fn autostart_set(app: AppHandle, enabled: bool) -> Result<(), String> {
-    use tauri_plugin_autostart::ManagerExt;
-    let m = app.autolaunch();
-    let res = if enabled { m.enable() } else { m.disable() };
-    res.map_err(|e| e.to_string())
+    #[cfg(windows)]
+    {
+        let _ = &app;
+        let mut cmd = std::process::Command::new("reg");
+        if enabled {
+            let target = autostart_target_exe();
+            // The marker lets a sign-in launch wait for Explorer and the final
+            // display/DPI topology instead of racing them at login.
+            let value = format!("\"{}\" --autostart", target.display());
+            cmd.args([
+                "add",
+                AUTOSTART_KEY,
+                "/v",
+                "Aura",
+                "/t",
+                "REG_SZ",
+                "/d",
+                value.as_str(),
+                "/f",
+            ]);
+        } else {
+            cmd.args(["delete", AUTOSTART_KEY, "/v", "Aura", "/f"]);
+        }
+        let status = cmd.status().map_err(|e| format!("autostart: {e}"))?;
+        if enabled && !status.success() {
+            return Err("Windows rejected the Aura autostart entry".into());
+        }
+        return Ok(());
+    }
+    #[cfg(not(windows))]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        let m = app.autolaunch();
+        let res = if enabled { m.enable() } else { m.disable() };
+        res.map_err(|e| e.to_string())
+    }
 }
 
 /// Reflect the actual OS autostart state (what the Settings toggle shows).
 #[tauri::command]
 pub fn autostart_is_enabled(app: AppHandle) -> bool {
-    use tauri_plugin_autostart::ManagerExt;
-    app.autolaunch().is_enabled().unwrap_or(false)
+    #[cfg(windows)]
+    {
+        let _ = &app;
+        return std::process::Command::new("reg")
+            .args(["query", AUTOSTART_KEY, "/v", "Aura"])
+            .output()
+            .map(|output| output.status.success())
+            .unwrap_or(false);
+    }
+    #[cfg(not(windows))]
+    {
+        use tauri_plugin_autostart::ManagerExt;
+        app.autolaunch().is_enabled().unwrap_or(false)
+    }
 }
 
 /// Hotkeys that open the settings panel, registered statically at boot.
 /// `app_shortcut_set` tears these down / re-registers them based on the
 /// user's Global-shortcut configuration.
-const SETTINGS_DEFAULT_COMBOS: [&str; 3] = ["ctrl+shift+,", "ctrl+shift+=", "ctrl+shift+numpadplus"];
+pub const SETTINGS_DEFAULT_COMBOS: [&str; 3] = ["ctrl+shift+,", "ctrl+shift+=", "ctrl+shift+numpadplus"];
 
 /// The user's custom settings hotkey, as currently registered system-wide.
 /// `None` = the defaults above are the active settings hotkeys.
 static CUSTOM_COMBO: Mutex<Option<String>> = Mutex::new(None);
 
-pub fn on_global_shortcut(app: &AppHandle, shortcut: &str, state: ShortcutState) {
+pub fn on_global_shortcut(app: &AppHandle, _shortcut: &str, state: ShortcutState) {
     if state == ShortcutState::Pressed {
-        // Route by exact match so a custom, alt-based settings combo
-        // (e.g. alt+s) doesn't fall into the launcher branch.
-        if shortcut.eq_ignore_ascii_case("alt+space") {
-            toggle_start(app.clone());
-        } else {
-            show_settings(app);
-        }
+        show_settings(app);
     }
 }
 
@@ -847,6 +1619,23 @@ pub fn on_global_shortcut(app: &AppHandle, shortcut: &str, state: ShortcutState)
 #[tauri::command]
 pub fn app_shortcut_set(app: AppHandle, enabled: bool, combo: Option<String>) -> Result<(), String> {
     let gs = app.global_shortcut();
+    let user = combo
+        .as_deref()
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_string);
+
+    // Validate the requested custom shortcut BEFORE tearing anything down: a
+    // bad value must never leave the app without its settings hotkey.
+    let parsed: Option<(String, Shortcut)> = match (&user, enabled) {
+        (Some(c), true) => {
+            let sc = c.parse::<Shortcut>().map_err(|e| {
+                format!("'{c}' is not a valid shortcut ({e:?}). Include at least one modifier, e.g. Ctrl/Alt/Shift.")
+            })?;
+            Some((c.clone(), sc))
+        }
+        _ => None,
+    };
 
     // Tear down everything we may have registered before (ignore failures —
     // unregistering something that isn't registered is not an error for us).
@@ -862,65 +1651,25 @@ pub fn app_shortcut_set(app: AppHandle, enabled: bool, combo: Option<String>) ->
     }
 
     if enabled {
-        let user = combo
-            .as_deref()
-            .map(str::trim)
-            .filter(|c| !c.is_empty());
-        if let Some(c) = user {
-            let sc: Shortcut = c
-                .parse()
-                .map_err(|e| format!("'{c}' is not a valid shortcut ({e:?}). Include at least one modifier, e.g. Ctrl/Alt/Shift."))?;
-            gs.register(sc)
-                .map_err(|e| format!("Could not register {c}: {e:?}"))?;
+        if let Some((c, sc)) = parsed {
+            if let Err(e) = gs.register(sc) {
+                // Registration failed (combo already taken by another app):
+                // restore the builtin defaults so the hotkey keeps working.
+                for s in SETTINGS_DEFAULT_COMBOS {
+                    let _ = gs.register(s);
+                }
+                return Err(format!("Could not register {c}: {e:?}"));
+            }
             if let Ok(mut slot) = CUSTOM_COMBO.lock() {
-                *slot = Some(c.to_string());
+                *slot = Some(c);
             }
         } else {
             for s in SETTINGS_DEFAULT_COMBOS {
-                gs.register(s).
-                    map_err(|e| format!("Could not register {s}: {e:?}"))?;
+                gs.register(s)
+                    .map_err(|e| format!("Could not register {s}: {e:?}"))?;
             }
         }
     }
     Ok(())
 }
 
-/// Whether the Start launcher module is enabled (mirrors `modules.start` on the
-/// frontend). The global Alt+Space shortcut is muted when the module is off.
-/// Starts false: the module ships disabled, and the launcher's webview flips
-/// this on boot so Alt+Space never reveals a blank window before then.
-static START_ENABLED: AtomicBool = AtomicBool::new(false);
-
-/// Frontend-driven enable flag for the launcher module.
-#[tauri::command]
-pub fn start_set_enabled(enabled: bool) {
-    START_ENABLED.store(enabled, Ordering::Relaxed);
-}
-
-/// Toggle the Start launcher from anywhere (global Alt+Space / tray intent).
-/// Recentering on the primary display keeps the palette predictable.
-#[tauri::command]
-pub fn toggle_start(app: AppHandle) {
-    if !START_ENABLED.load(Ordering::Relaxed) {
-        return;
-    }
-    let Some(w) = app.get_webview_window("start") else {
-        return;
-    };
-    if matches!(w.is_visible(), Ok(true)) {
-        let _ = w.hide();
-        return;
-    }
-    if let Ok(Some(mon)) = app.primary_monitor() {
-        let msize = mon.size();
-        let mpos = mon.position();
-        if let Ok(win) = w.outer_size() {
-            let x = mpos.x + ((msize.width as f64 - win.width as f64) / 2.0).max(0.0) as i32;
-            let y = mpos.y + ((msize.height as f64 - win.height as f64) * 0.32).max(0.0) as i32;
-            let _ = w.set_position(tauri::PhysicalPosition::new(x, y));
-        }
-    }
-    let _ = w.show();
-    let _ = w.unminimize();
-    let _ = w.set_focus();
-}

@@ -46,7 +46,9 @@ fn poll_devices() -> Vec<BtDevice> {
     const BLE_AUDIO: &str = "System.Devices.Aep.ProtocolId:=\"{bb7bb05e-5a5f-44a9-97af-7a2f2a6c3e9c}\"";
     const CLASSIC: &str = "System.Devices.Aep.ProtocolId:=\"{e0cbf06c-cd8b-4647-bb8b-7b4b9d5b1e46}\"";
     const CONNECTED: &str = "System.Devices.Aep.IsConnected:=System.StructuredQueryType.Boolean#True";
-    let selector = HSTRING::from(format!("({}) OR ({}) AND {}", BLE_AUDIO, CLASSIC, CONNECTED));
+    // AND binds tighter than OR; without the outer grouping disconnected BLE
+    // audio devices were listed as if they were connected.
+    let selector = HSTRING::from(format!("(({}) OR ({})) AND {}", BLE_AUDIO, CLASSIC, CONNECTED));
 
     // Build the requested-property list at runtime (IInspectable) and query
     // its IIterable interface — avoids array-Param trait mismatch between

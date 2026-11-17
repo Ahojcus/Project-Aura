@@ -1,9 +1,9 @@
 {
-  "name": "aura-desktop",
+  "name": "aura-functional",
   "private": true,
-  "version": "0.5.0-pre",
+  "version": "0.6.0",
   "type": "module",
-  "description": "Aura — lightweight modular desktop overlay (wallpaper, clock, to-do, smart notch) built with Tauri + React.",
+  "description": "Functionality-only modular desktop overlay: wallpaper engine, clock, smart notch, to-do, status bar and settings.",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

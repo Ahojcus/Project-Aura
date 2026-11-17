@@ -1,7 +1,7 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
-// Multi-page build: one HTML entry per Tauri window label.
+// Multi-page build: one HTML entry per overlay window.
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
@@ -11,11 +11,12 @@ export default defineConfig({
     rollupOptions: {
       input: {
         index: "index.html",
-        notch: "notch.html",
         wallpaper: "wallpaper.html",
+        notch: "notch.html",
         clock: "clock.html",
         todo: "todo.html",
-        start: "start.html",
+        statusbar: "statusbar.html",
+        edgelight: "edgelight.html",
       },
     },
   },

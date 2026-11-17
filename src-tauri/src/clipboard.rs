@@ -25,12 +25,20 @@ pub fn spawn_clipboard_thread() -> History {
     {
         let inner = history.clone();
         std::thread::spawn(move || {
+            use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
+            // Only read when the clipboard actually changed. Polling the same
+            // text every 2s used to restamp the newest entry's "ago" forever.
+            let mut last_seq = 0u32;
             loop {
-                if let Some(text) = read_clipboard_text() {
-                    let text = text.chars().take(MAX_TEXT_LEN).collect::<String>();
-                    let trimmed = text.trim().to_string();
-                    if !trimmed.is_empty() {
-                        push_entry(&inner, trimmed);
+                let seq = unsafe { GetClipboardSequenceNumber() };
+                if seq != last_seq {
+                    last_seq = seq;
+                    if let Some(text) = read_clipboard_text() {
+                        let text = text.chars().take(MAX_TEXT_LEN).collect::<String>();
+                        let trimmed = text.trim().to_string();
+                        if !trimmed.is_empty() {
+                            push_entry(&inner, trimmed);
+                        }
                     }
                 }
                 std::thread::sleep(std::time::Duration::from_millis(POLL_MS));
@@ -92,9 +100,11 @@ pub fn write_clipboard_text(text: &str) -> Result<(), String> {
 /// Read plain text from the Windows clipboard, if there is any.
 #[cfg(windows)]
 fn read_clipboard_text() -> Option<String> {
-    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
-    use windows::Win32::System::Ole::CF_UNICODETEXT;
     use windows::Win32::Foundation::HWND;
+    use windows::Win32::System::DataExchange::{CloseClipboard, GetClipboardData, OpenClipboard};
+    use windows::Win32::Foundation::HGLOBAL;
+    use windows::Win32::System::Memory::{GlobalLock, GlobalUnlock};
+    use windows::Win32::System::Ole::CF_UNICODETEXT;
 
     unsafe {
         if OpenClipboard(HWND(std::ptr::null_mut())).is_err() {
@@ -102,7 +112,11 @@ fn read_clipboard_text() -> Option<String> {
         }
         let out = (|| -> Option<String> {
             let handle = GetClipboardData(CF_UNICODETEXT.0 as u32).ok()?;
-            let ptr = handle.0 as *const u16;
+            // Clipboard data is a global-memory handle; its handle value is
+            // not a text pointer. Lock it before dereferencing. The old direct
+            // cast read whatever happened to live at that handle value.
+            let hglobal = HGLOBAL(handle.0);
+            let ptr = GlobalLock(hglobal) as *const u16;
             if ptr.is_null() {
                 return None;
             }
@@ -110,11 +124,13 @@ fn read_clipboard_text() -> Option<String> {
             while *ptr.add(len) != 0 && len < 100_000 {
                 len += 1;
             }
-            if len == 0 {
-                return None;
-            }
-            let slice = std::slice::from_raw_parts(ptr, len);
-            Some(String::from_utf16_lossy(slice))
+            let text = if len == 0 {
+                None
+            } else {
+                Some(String::from_utf16_lossy(std::slice::from_raw_parts(ptr, len)))
+            };
+            let _ = GlobalUnlock(hglobal);
+            text
         })();
         let _ = CloseClipboard();
         out

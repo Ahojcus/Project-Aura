@@ -1,25 +1,38 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod apps;
+mod appbar;
+mod audio;
 mod bluetooth;
 mod commands;
+mod downloads;
 mod media;
 mod monit;
 mod wallpaper_win;
 mod clipboard;
 
+use std::time::Duration;
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, WindowEvent,
+    Emitter, Manager, WindowEvent,
 };
 
 fn main() {
+    let launched_at_signin = std::env::args().any(|arg| arg == "--autostart");
     let media_state = media::spawn_media_thread();
     let sys_state = monit::spawn_sys_thread();
     let clipboard_state = clipboard::spawn_clipboard_thread();
     let bluetooth_state = bluetooth::spawn_bluetooth_thread();
     let apps_state = apps::spawn_apps_thread();
+
+    // Register shortcuts after the app is running, not during plugin
+    // initialization: a combo owned by another app must not abort startup.
+    let shortcut_plugin = tauri_plugin_global_shortcut::Builder::new()
+        .with_handler(|app, shortcut, event| {
+            commands::on_global_shortcut(app, &shortcut.to_string(), event.state());
+        })
+        .build();
 
     tauri::Builder::default()
         .manage(media_state)
@@ -32,18 +45,28 @@ fn main() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts(["ctrl+shift+,", "ctrl+shift+=", "ctrl+shift+numpadplus", "alt+space"])
-                .expect("failed to register global shortcut")
-                .with_handler(|app, shortcut, event| {
-                    commands::on_global_shortcut(app, &shortcut.to_string(), event.state());
-                })
-                .build(),
-        )
-        .setup(|app| {
+        .plugin(shortcut_plugin)
+        .setup(move |app| {
+            use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
+            for combo in commands::SETTINGS_DEFAULT_COMBOS {
+                if let Ok(shortcut) = combo.parse::<Shortcut>() {
+                    if let Err(err) = app.global_shortcut().register(shortcut) {
+                        eprintln!("Aura: settings shortcut {combo} unavailable: {err:?}");
+                    }
+                }
+            }
+            monit::spawn_wallpaper_pause_thread(app.handle().clone());
+            monit::spawn_display_thread(app.handle().clone());
+            monit::spawn_fullscreen_thread(app.handle().clone());
             position_windows(app)?;
+            create_wallpaper_extras(app)?;
             build_tray(app)?;
+            spawn_startup_settle(app.handle().clone(), launched_at_signin);
+            // On a sign-in launch the settings panel is shown by the settle
+            // thread; a normal launch should open immediately as before.
+            if !launched_at_signin {
+                show_settings(app.handle());
+            }
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -52,14 +75,27 @@ fn main() {
                     // Hide to tray instead of quitting; Quit lives in the tray menu.
                     api.prevent_close();
                     let _ = window.hide();
+                    return;
                 }
+            }
+            if let WindowEvent::Focused(true) = event {
+                // Clicking a bottom-band module panel activates it, and Windows
+                // always raises the activated window above the other apps. The
+                // panels must stay clickable/selectable but never climb the
+                // z-stack, so sink it straight back into its band (it keeps
+                // foreground focus — typing still works — it just doesn't stay
+                // drawn on top).
+                commands::window_focus_restack(window.app_handle(), window.label());
             }
         })
         .invoke_handler(tauri::generate_handler![
             commands::toggle_settings,
             commands::set_module_visible,
+            commands::module_set_hit_region,
             commands::window_apply,
             commands::notch_apply_layout,
+            commands::statusbar_apply_layout,
+            commands::module_sync_displays,
             commands::open_shortcut,
             commands::wallpaper_import,
             commands::wallpaper_delete_copy,
@@ -68,22 +104,74 @@ fn main() {
             commands::toggle_media_playback,
             commands::get_media_info,
             commands::get_media_art,
+            commands::get_audio_sessions,
+            commands::set_audio_session,
+            commands::get_downloads,
+            commands::cloak_apply,
+            commands::edge_light_apply,
             commands::get_system_info,
+            commands::wallpaper_set_pause_mode,
+            commands::wallpaper_set_battery_pause,
+            commands::get_power_status,
+            commands::get_active_window,
+            commands::get_master_volume,
             commands::get_clipboard_history,
             commands::copy_clipboard_text,
             commands::get_bluetooth_battery,
             commands::notch_chime,
             commands::autostart_set,
             commands::autostart_is_enabled,
+            commands::startup_is_ready,
             commands::app_shortcut_set,
             commands::get_monitors,
             commands::get_apps,
             commands::rescan_apps,
-            commands::start_set_enabled,
-            commands::toggle_start,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Create the per-display wallpaper webviews once, on the native setup thread.
+/// They are hidden until the main wallpaper page asks to show them. Building
+/// them lazily from a command was what stalled the event loop.
+fn create_wallpaper_extras(app: &tauri::App) -> tauri::Result<()> {
+    let Some(primary) = app.primary_monitor().ok().flatten() else {
+        return Ok(());
+    };
+    let primary_pos = primary.position();
+    for monitor in app.available_monitors().unwrap_or_default() {
+        let pos = monitor.position();
+        if pos.x == primary_pos.x && pos.y == primary_pos.y {
+            continue;
+        }
+        let label = format!("wallpaper_{}_{}", pos.x, pos.y);
+        if app.get_webview_window(&label).is_some() {
+            continue;
+        }
+        let builder = tauri::WebviewWindowBuilder::new(
+            app.handle(),
+            &label,
+            tauri::WebviewUrl::App("wallpaper.html".into()),
+        )
+        .visible(false)
+        .decorations(false)
+        .transparent(true)
+        .skip_taskbar(true)
+        .resizable(false)
+        .shadow(false)
+        .focused(false)
+        .additional_browser_args(
+            "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows",
+        );
+        if let Ok(window) = builder.build() {
+            let size = monitor.size();
+            let _ = window.set_size(tauri::PhysicalSize::new(size.width.max(1), size.height.max(1)));
+            let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+            let _ = window.set_ignore_cursor_events(true);
+            let _ = window.set_focusable(false);
+        }
+    }
+    Ok(())
 }
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -129,6 +217,47 @@ fn show_settings(app: &tauri::AppHandle) {
     }
 }
 
+/// At sign-in, Explorer and the monitor topology can take a few seconds to
+/// exist. Hold module reveal and the settings panel until the shell tray is up
+/// and monitors are enumerable, then mark startup ready for the webviews.
+fn spawn_startup_settle(app: tauri::AppHandle, autostart: bool) {
+    std::thread::spawn(move || {
+        if autostart {
+            let deadline = std::time::Instant::now() + Duration::from_secs(12);
+            loop {
+                let monitors_ready = app
+                    .available_monitors()
+                    .map(|monitors| !monitors.is_empty())
+                    .unwrap_or(false);
+                #[cfg(windows)]
+                let shell_ready = {
+                    use windows::core::{w, PCWSTR};
+                    use windows::Win32::UI::WindowsAndMessaging::FindWindowW;
+                    unsafe { FindWindowW(w!("Shell_TrayWnd"), PCWSTR::null()).is_ok() }
+                };
+                #[cfg(not(windows))]
+                let shell_ready = true;
+
+                if (monitors_ready && shell_ready) || std::time::Instant::now() >= deadline {
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(200));
+            }
+            // Give the shell a moment to finish applying the login DPI scale.
+            std::thread::sleep(Duration::from_millis(500));
+        } else {
+            std::thread::sleep(Duration::from_millis(150));
+        }
+
+        commands::STARTUP_READY.store(true, std::sync::atomic::Ordering::Relaxed);
+        let _ = app.emit("aura:startup-settled", ());
+        let _ = app.emit("aura:displays-changed", ());
+        if autostart {
+            show_settings(&app);
+        }
+    });
+}
+
 /// Open a URL or a file/app path through the OS default handler.
 pub fn open_external(target: &str) -> std::io::Result<()> {
     #[cfg(windows)]
@@ -158,37 +287,17 @@ pub fn open_external(target: &str) -> std::io::Result<()> {
     }
 }
 
-/// Position the overlay windows on the primary display at startup.
+/// Position the wallpaper backdrop at startup. Module positions are restored
+/// from the persisted settings store by each webview; setting native defaults
+/// here races that restore and used to pull clock/todo/notch back to their
+/// startup coordinates after a restart.
 fn position_windows(app: &tauri::App) -> tauri::Result<()> {
     if let Ok(Some(monitor)) = app.primary_monitor() {
         let size = monitor.size();
-        let (w, h) = (size.width as f64, size.height as f64);
-        let scale = monitor.scale_factor() as f64;
-
-        if let Some(wn) = app.get_webview_window("notch") {
-            let notch_w = (240.0 * scale) as i32;
-            let _ = wn.set_position(tauri::PhysicalPosition::new(((w - notch_w as f64) / 2.0) as i32, 0));
-        }
         if let Some(ww) = app.get_webview_window("wallpaper") {
             let _ = ww.set_size(tauri::PhysicalSize::new(size.width, size.height));
             let _ = ww.set_position(tauri::PhysicalPosition::new(monitor.position().x, monitor.position().y));
             let _ = ww.set_ignore_cursor_events(true);
-        }
-        if let Some(wc) = app.get_webview_window("clock") {
-            // Window is 340+2×64 logical wide with the glass inset 64px, so
-            // keep the VISIBLE widget 48px from the right / 40px from the top
-            // like the old geometry: widget right edge sits at 54px, i.e.
-            // x = w − 458 (54 margin + 340 glass + 64 pad), all × scale.
-            let x = (w - 458.0 * scale).max(0.0) as i32;
-            let y = ((46.0 - 64.0) * scale).max(0.0) as i32;
-            let _ = wc.set_position(tauri::PhysicalPosition::new(x, y));
-        }
-        if let Some(wt) = app.get_webview_window("todo") {
-            // Same idea, bottom-left: widget left margin 46px, bottom margin
-            // 46px, glass 520 logical tall, pad 64 → y = h − 630 × scale.
-            let x = ((46.0 - 64.0) * scale).max(0.0) as i32;
-            let y = (h - 630.0 * scale).max(0.0) as i32;
-            let _ = wt.set_position(tauri::PhysicalPosition::new(x, y));
         }
     }
     Ok(())

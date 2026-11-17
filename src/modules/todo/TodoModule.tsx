@@ -1,110 +1,177 @@
-import { useMemo, useState } from "react";
-import { useTodo, isOverdue } from "../../store/todo";
-import type { Priority, Task } from "../../store/todo";
-import { useSettings, useModuleWindow } from "../../store/settings";
+import { useEffect, useMemo, useState } from "react";
+import { isOverdue, useTodo, type Priority, type Task } from "../../store/todo";
+import { useModuleWindow, useSettings } from "../../store/settings";
 import { dragHandle } from "../../lib/drag";
+import { useHitRegion } from "../../lib/hitRegion";
 
-const DUE_MS = { high: "var(--danger)", medium: "var(--warn)", low: "var(--ok)" } as const;
+type StatusFilter = "all" | "open" | "done";
+
+interface EditPatch {
+  text: string;
+  category: string;
+  priority: Priority;
+  due?: string;
+}
 
 export function TodoModule() {
-  const { tasks, add, toggle, remove, clearDone } = useTodo();
+  const { tasks, add, toggle, remove, clearDone, edit } = useTodo();
   const categories = useSettings((s) => s.settings.todo.categories);
   const sortMode = useSettings((s) => s.settings.todo.sort);
+  const defaultPriority = useSettings((s) => s.settings.todo.defaultPriority);
   const draggable = useSettings((s) => s.settings.todo.win.draggable);
-  const winStyle = useModuleWindow("todo");
-  const noBg = !useSettings((s) => s.settings.todo.background);
+  useModuleWindow("todo");
+  useHitRegion(".todo-root", 15, 6);
+
   const [text, setText] = useState("");
-  const [category, setCategory] = useState(categories[0] ?? "Personal");
-  const [priority, setPriority] = useState<Priority>("medium");
+  const [category, setCategory] = useState(categories[0] ?? "");
+  const [priority, setPriority] = useState<Priority>(defaultPriority);
   const [due, setDue] = useState("");
-  const [filter, setFilter] = useState<string>("all");
+  const [status, setStatus] = useState<StatusFilter>("all");
+  const [categoryFilter, setCategoryFilter] = useState<string>("all");
+  const [query, setQuery] = useState("");
+
+  // Settings can remove a category while the widget is open.
+  useEffect(() => {
+    if (!categories.includes(category)) setCategory(categories[0] ?? "");
+  }, [categories, category]);
+
+  useEffect(() => {
+    if (categoryFilter !== "all" && !categories.includes(categoryFilter)) setCategoryFilter("all");
+  }, [categories, categoryFilter]);
 
   const visible = useMemo(() => {
-    const list = filter === "all" ? tasks : tasks.filter((t) => t.category === filter);
+    const byCategory =
+      categoryFilter === "all" ? tasks : tasks.filter((t) => t.category === categoryFilter);
+    const byStatus = byCategory.filter((t) =>
+      status === "all" ? true : status === "done" ? t.done : !t.done,
+    );
+    const q = query.trim().toLowerCase();
+    const byQuery = !q
+      ? byStatus
+      : byStatus.filter(
+          (t) => t.text.toLowerCase().includes(q) || t.category.toLowerCase().includes(q),
+        );
     if (sortMode === "created") {
-      // Newest first; finished tasks sink to the bottom of the list.
-      return [...list].sort((a, b) => Number(a.done) - Number(b.done) || b.createdAt - a.createdAt);
+      return [...byQuery].sort(
+        (a, b) => Number(a.done) - Number(b.done) || b.createdAt - a.createdAt,
+      );
     }
-    // "smart": the store already sorts by priority / due date.
-    return list;
-  }, [tasks, filter, sortMode]);
+    // "smart": the store already keeps priority / due-date order.
+    return byQuery;
+  }, [tasks, categoryFilter, status, query, sortMode]);
+
   const openCount = tasks.filter((t) => !t.done).length;
+  const doneCount = tasks.length - openCount;
+
+  const submit = () => {
+    add(text, category, priority, due || undefined);
+    setText("");
+    setDue("");
+    setPriority(defaultPriority);
+  };
 
   return (
-    <div className={`widget glass${noBg ? " no-bg" : ""}`} style={winStyle}>
+    <div className="todo-root">
       <div
-        style={{ display: "flex", alignItems: "center", justifyContent: "space-between", cursor: draggable ? "grab" : undefined }}
-        {...(draggable ? { onPointerDown: dragHandle } : undefined)}
-        title={draggable ? "Drag to move the widget" : undefined}
+        className="todo-head"
+        onPointerDown={draggable ? dragHandle : undefined}
+        title={draggable ? "Drag to move" : undefined}
       >
-        <div style={{ fontWeight: 600, fontSize: 14 }}>To-Do</div>
-        <div style={{ fontSize: 12, color: "var(--muted)" }}>{openCount} open</div>
+        <strong>To-Do</strong>
+        <span className="todo-meta">
+          {openCount} open · {doneCount} done
+        </span>
       </div>
 
-      <div className="todo-filters" style={{ marginTop: 8 }}>
-        {["all", ...categories].map((c) => (
-          <button key={c} className={`chip ${filter === c ? "active" : ""}`} onClick={() => setFilter(c)}>
-            {c === "all" ? "All" : c}
+      <div className="todo-filters">
+        {(
+          [
+            ["all", "All"],
+            ["open", "Open"],
+            ["done", "Done"],
+          ] as [StatusFilter, string][]
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            className={`todo-filter${status === key ? " active" : ""}`}
+            onClick={() => setStatus(key)}
+          >
+            {label}
           </button>
         ))}
       </div>
 
+      <div className="todo-filters">
+        {["all", ...categories].map((c) => (
+          <button
+            key={c}
+            className={`todo-filter${categoryFilter === c ? " active" : ""}`}
+            onClick={() => setCategoryFilter(c)}
+          >
+            {c === "all" ? "All categories" : c}
+          </button>
+        ))}
+      </div>
+
+      <input
+        type="search"
+        className="todo-search"
+        placeholder="Search tasks…"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+
       <div className="todo-list">
         {visible.length === 0 && (
-          <div className="todo-empty">Nothing here.</div>
+          <div className="todo-empty">
+            {query.trim() ? `No tasks match “${query.trim()}”.` : "Nothing here."}
+          </div>
         )}
         {visible.map((t) => (
-          <TaskRow key={t.id} task={t} onToggle={toggle} onRemove={remove} />
+          <TaskRow
+            key={t.id}
+            task={t}
+            categories={categories}
+            onToggle={toggle}
+            onRemove={remove}
+            onSave={edit}
+          />
         ))}
       </div>
 
       <div className="todo-add">
         <input
+          type="text"
           placeholder="Add a task…"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              add(text, category, priority, due || undefined);
-              setText("");
-              setDue("");
-            }
+            if (e.key === "Enter") submit();
           }}
         />
-        <select className="mini" value={category} onChange={(e) => setCategory(e.target.value)}>
+        <select value={category} onChange={(e) => setCategory(e.target.value)} title="Category">
+          {categories.length === 0 && <option value="">Uncategorised</option>}
           {categories.map((c) => (
             <option key={c}>{c}</option>
           ))}
         </select>
-        <select className="mini" value={priority} onChange={(e) => setPriority(e.target.value as Priority)}>
+        <select
+          value={priority}
+          onChange={(e) => setPriority(e.target.value as Priority)}
+          title="Priority"
+        >
           <option value="low">Low</option>
           <option value="medium">Med</option>
           <option value="high">High</option>
         </select>
-        <input
-          type="date"
-          className="mini"
-          value={due}
-          onChange={(e) => setDue(e.target.value)}
-          title="Due date"
-        />
-        <button
-          className="todo-add-btn"
-          aria-label="Add task"
-          onClick={() => {
-            add(text, category, priority, due || undefined);
-            setText("");
-            setDue("");
-          }}
-        >
-          <svg viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2.4} fill="none" strokeLinecap="round" aria-hidden>
-            <path d="M12 5v14M5 12h14" />
-          </svg>
+        <input type="date" value={due} onChange={(e) => setDue(e.target.value)} title="Due date" />
+        <button onClick={submit} aria-label="Add task">
+          +
         </button>
       </div>
-      {tasks.some((t) => t.done) && (
+      {doneCount > 0 && (
         <button className="todo-clear" onClick={clearDone}>
-          Clear {tasks.filter((t) => t.done).length} done
+          Clear {doneCount} done
         </button>
       )}
     </div>
@@ -113,36 +180,102 @@ export function TodoModule() {
 
 function TaskRow({
   task,
+  categories,
   onToggle,
   onRemove,
+  onSave,
 }: {
   task: Task;
+  categories: string[];
   onToggle: (id: string) => void;
   onRemove: (id: string) => void;
+  onSave: (id: string, patch: EditPatch) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(task.text);
+  const [category, setCategory] = useState(task.category);
+  const [priority, setPriority] = useState<Priority>(task.priority);
+  const [due, setDue] = useState(task.due ?? "");
+
+  const begin = () => {
+    setText(task.text);
+    setCategory(task.category);
+    setPriority(task.priority);
+    setDue(task.due ?? "");
+    setEditing(true);
+  };
+
+  const save = () => {
+    const next = text.trim();
+    if (!next) return;
+    onSave(task.id, { text: next, category, priority, due: due || undefined });
+    setEditing(false);
+  };
+
+  if (editing) {
+    return (
+      <div className="todo-row editing">
+        <input
+          type="text"
+          autoFocus
+          value={text}
+          aria-label="Task text"
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            else if (e.key === "Escape") setEditing(false);
+          }}
+        />
+        <select value={category} aria-label="Category" onChange={(e) => setCategory(e.target.value)}>
+          {categories.length === 0 && <option value="">Uncategorised</option>}
+          {categories.map((c) => (
+            <option key={c}>{c}</option>
+          ))}
+        </select>
+        <select
+          value={priority}
+          aria-label="Priority"
+          onChange={(e) => setPriority(e.target.value as Priority)}
+        >
+          <option value="low">Low</option>
+          <option value="medium">Med</option>
+          <option value="high">High</option>
+        </select>
+        <input type="date" value={due} aria-label="Due date" onChange={(e) => setDue(e.target.value)} />
+        <button onClick={save}>Save</button>
+        <button onClick={() => setEditing(false)}>Cancel</button>
+      </div>
+    );
+  }
+
   return (
-    <div className={`todo-row ${task.done ? "done" : ""}`}>
-      <button
-        className={`todo-check ${task.done ? "checked" : ""}`}
+    <div className={`todo-row${task.done ? " done" : ""}`}>
+      <input
+        type="checkbox"
+        className="todo-check"
+        checked={task.done}
+        onChange={() => onToggle(task.id)}
         aria-label={task.done ? "Mark undone" : "Mark done"}
-        onClick={() => onToggle(task.id)}
       />
-      <span className="todo-text">{task.text}</span>
+      <span className="todo-text" title="Double-click to edit" onDoubleClick={begin}>
+        {task.text}
+      </span>
       <span className="todo-meta">
         {task.due && (
-          <span className={`pill due ${isOverdue(task) ? "overdue" : ""}`}>
-            {isOverdue(task) ? "!! " : "~ "}
-            {task.due.slice(5)}
+          <span className={`todo-pill${isOverdue(task) ? " overdue" : ""}`} title="Due date">
+            {isOverdue(task) ? "overdue " : ""}
+            {task.due}
           </span>
         )}
-        <span className={`pill ${task.priority}`}>{task.priority}</span>
-        <span className="pill">{task.category}</span>
+        <span className={`todo-pill ${task.priority}`}>{task.priority}</span>
+        <span className="todo-pill">{task.category}</span>
       </span>
-      <button className="todo-del" aria-label="Delete" onClick={() => onRemove(task.id)}>
+      <button className="todo-edit" aria-label="Edit task" onClick={begin}>
+        ✎
+      </button>
+      <button className="todo-delete" aria-label="Delete task" onClick={() => onRemove(task.id)}>
         ✕
       </button>
     </div>
   );
 }
-
-export { DUE_MS };

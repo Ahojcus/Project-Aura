@@ -1,9 +1,10 @@
 import { createRoot } from "react-dom/client";
+import { SettingsApp } from "../modules/settings/SettingsApp";
 import { setupSettingsSync } from "../lib/sync";
 import "../styles/base.css";
-import { SettingsApp } from "../modules/settings/SettingsApp";
-import "../modules/settings/settings.css";
 
-void setupSettingsSync();
+document.body.dataset.module = "settings";
 
-createRoot(document.getElementById("root")!).render(<SettingsApp />);
+void setupSettingsSync().then(() => {
+  createRoot(document.getElementById("root")!).render(<SettingsApp />);
+});

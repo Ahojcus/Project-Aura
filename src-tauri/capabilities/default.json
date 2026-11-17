@@ -1,13 +1,26 @@
 {
   "identifier": "default",
-  "description": "Permissions for all Aura windows.",
-  "windows": ["settings", "notch", "wallpaper", "clock", "todo", "start"],
+  "description": "Permissions for all Aura overlay windows, including per-display duplicates.",
+  "windows": [
+    "settings",
+    "notch",
+    "wallpaper",
+    "clock",
+    "todo",
+    "statusbar",
+    "notch_*",
+    "wallpaper_*",
+    "clock_*",
+    "todo_*",
+    "statusbar_*"
+  ],
   "permissions": [
     "core:default",
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-start-dragging",
     "core:window:allow-set-focus",
+    "core:window:allow-set-ignore-cursor-events",
     "dialog:default"
   ]
 }

@@ -1,9 +1,10 @@
 import { createRoot } from "react-dom/client";
+import { NotchApp } from "../modules/notch/NotchApp";
 import { setupSettingsSync } from "../lib/sync";
 import "../styles/base.css";
-import { NotchApp } from "../modules/notch/NotchApp";
-import "../modules/notch/notch.css";
 
-void setupSettingsSync("notch");
+document.body.dataset.module = "notch";
 
-createRoot(document.getElementById("root")!).render(<NotchApp />);
+void setupSettingsSync("notch").then(() => {
+  createRoot(document.getElementById("root")!).render(<NotchApp />);
+});

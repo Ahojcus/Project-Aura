@@ -1,204 +1,2843 @@
-@import "./notch-fx.css"; /* shared by the notch page and the settings previews */
+/* Aura — simple visual theme: one accent, soft surfaces, rounded cards. */
 
 :root {
-  --accent: #6c7bff;
-  --font-stack: "Segoe UI Variable", "Segoe UI", system-ui, -apple-system, sans-serif;
-  --radius-lg: 20px;
-  --radius-md: 14px;
-  --radius-sm: 10px;
-}
-
-[data-theme="dark"] {
-  --bg: #0b0e14;
-  --panel: rgba(20, 24, 36, 0.82);
-  --panel-solid: #141824;
-  --panel-hover: rgba(32, 38, 56, 0.9);
-  --text: #e8ecf5;
-  --muted: #9aa4ba;
-  --border: rgba(255, 255, 255, 0.08);
-  --border-strong: rgba(255, 255, 255, 0.14);
-  --danger: #ff6b6b;
-  --warn: #ffb84d;
-  --ok: #4ade80;
-}
-
-[data-theme="light"] {
+  color-scheme: light;
+  --fg: #14171d;
   --bg: #f3f5fa;
-  --panel: rgba(255, 255, 255, 0.85);
-  --panel-solid: #ffffff;
-  --panel-hover: rgba(240, 243, 250, 0.95);
-  --text: #171b26;
-  --muted: #5d6579;
-  --border: rgba(15, 20, 40, 0.09);
-  --border-strong: rgba(15, 20, 40, 0.16);
-  --danger: #d93b4a;
-  --warn: #c47f16;
-  --ok: #1d9e55;
-}
-
-* { box-sizing: border-box; }
-
-/* Keyboard focus ring for every interactive element */
-:focus-visible {
-  outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent);
-  outline-offset: 2px;
-}
-
-::selection {
-  background: color-mix(in srgb, var(--accent) 32%, transparent);
-}
-
-html, body {
-  margin: 0;
-  padding: 0;
-  font-family: var(--font-stack);
-  color: var(--text);
+  --surface: #ffffff;
+  --surface-2: #e9edf5;
+  --line: #d8deea;
+  --muted: #5f6a7d;
+  --accent: #5b6cff;
+  --accent-ink: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--accent) 14%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 42%, var(--line));
+  --danger: #d94b4b;
+  --ok: #2f9e6a;
+  --warn: #c8871a;
+  --shadow: 0 14px 34px rgba(19, 27, 45, 0.14);
+  --shadow-soft: 0 2px 10px rgba(19, 27, 45, 0.07);
+  /* Overlay surface opacity: lower values show more of the desktop behind. */
+  --module-glass-strong: 88%;
+  --module-glass: 78%;
+  --radius: 13px;
+  --radius-sm: 8px;
+  --ease: cubic-bezier(0.22, 0.8, 0.28, 1);
+  --fast: 140ms;
+  --med: 220ms;
+  font: 13px/1.5 "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --fg: #e9edf5;
+  --bg: #0e1116;
+  --surface: #171b23;
+  --surface-2: #1e2430;
+  --line: #2b3342;
+  --muted: #94a0b4;
+  --accent-ink: #ffffff;
+  --accent-soft: color-mix(in srgb, var(--accent) 20%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 52%, var(--line));
+  --danger: #f07070;
+  --ok: #4cc38a;
+  --warn: #e0a83c;
+  --shadow: 0 16px 38px rgba(0, 0, 0, 0.5);
+  --shadow-soft: 0 2px 12px rgba(0, 0, 0, 0.32);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
 #root {
-  width: 100vw;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  color: var(--fg);
+  background: transparent;
+}
+
+/* Fill each module window so its surface anchors to the native window. */
+body[data-module="clock"] #root,
+body[data-module="todo"] #root,
+body[data-module="notch"] #root,
+body[data-module="statusbar"] #root,
+body[data-module="edgelight"] #root {
+  height: 100vh;
+}
+
+body[data-module="clock"] #root {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  padding: 4px 10px;
+  transition:
+    background var(--fast) var(--ease),
+    border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
+}
+
+button:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
+}
+
+button:active {
+  transform: translateY(0.5px) scale(0.985);
+}
+
+button:disabled {
+  opacity: 0.42;
+  cursor: default;
+  transform: none;
+}
+
+button:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 55%, transparent);
+  outline-offset: 2px;
+}
+
+input:not([type="checkbox"]):not([type="range"]):not([type="color"]):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
+
+input:not([type="checkbox"]):not([type="range"]):not([type="color"]),
+select,
+textarea {
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 5px 8px;
+  min-width: 0;
+  transition:
+    border-color var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease),
+    background var(--fast) var(--ease);
+}
+
+input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--accent);
+}
+
+input[type="range"] {
+  accent-color: var(--accent);
+}
+
+select {
+  cursor: pointer;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 99px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+  background-clip: padding-box;
+}
+
+/* ------------------------------------------------------------------ wallpaper */
+
+.wallpaper-layer {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  background:
+    radial-gradient(1100px 700px at 18% 8%, #1b2230, transparent 68%),
+    #0b0d12;
+}
+
+.wallpaper-filter-defs {
+  position: absolute;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.wallpaper-media {
+  display: block;
+  width: 100%;
+  height: 100%;
+  transform-origin: center;
+  border: 0;
+  animation: fade-in 320ms var(--ease) both;
+  transition: transform 320ms var(--ease);
+}
+
+/* ---------------------------------------------------------------------- clock */
+
+.clock-root {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 17px 26px 15px;
+  overflow: hidden;
+  background: linear-gradient(
+    180deg,
+    color-mix(
+      in srgb,
+      color-mix(in srgb, var(--surface) 96%, var(--accent) 4%) var(--module-glass-strong),
+      transparent
+    ),
+    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+  );
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    var(--shadow);
+  color: var(--fg);
+}
+
+.clock-root::before {
+  content: "";
+  position: absolute;
+  inset: 0 22% auto;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  opacity: 0.85;
+}
+
+.clock-digital,
+.clock-minimal {
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.clock-minimal {
+  font-size: 28px;
+  font-weight: 500;
+}
+
+.clock-ampm {
+  font-size: 13px;
+  font-weight: 500;
+  margin-left: 5px;
+  color: var(--muted);
+  letter-spacing: 0.04em;
+}
+
+.clock-date {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.clock-date::before {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.clock-root svg {
+  color: color-mix(in srgb, var(--fg) 82%, transparent);
+}
+
+/* ----------------------------------------------------------------------- todo */
+
+.todo-root {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  width: 100%;
+  height: 100%;
+  padding: 12px;
+  overflow: auto;
+  background: color-mix(in srgb, var(--surface) var(--module-glass), transparent);
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  box-shadow: var(--shadow);
+}
+
+.todo-head,
+.todo-row,
+.todo-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.todo-head {
+  justify-content: space-between;
+}
+
+.todo-head strong {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.todo-head strong::before {
+  content: "";
+  width: 3px;
+  height: 13px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.todo-head .todo-meta {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--surface-2);
+  font-size: 10px;
+  letter-spacing: 0.02em;
+}
+
+.todo-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.todo-filter {
+  padding: 2px 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.todo-filter:hover {
+  background: var(--surface-2);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+.todo-filter.active {
+  background: var(--accent);
+  border-color: transparent;
+  color: var(--accent-ink);
+  font-weight: 650;
+}
+
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  flex: 1;
+  min-height: 40px;
+}
+
+.todo-row {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  padding: 5px 8px;
+  animation: row-in 200ms var(--ease) both;
+  transition:
+    border-color var(--fast) var(--ease),
+    background var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
+}
+
+.todo-row:hover {
+  border-color: var(--accent-line);
+  box-shadow: var(--shadow-soft);
+  transform: translateY(-1px);
+}
+
+.todo-row:active {
+  transform: none;
+}
+
+.todo-text {
+  flex: 1;
+  overflow-wrap: anywhere;
+}
+
+.todo-row.done {
+  opacity: 0.62;
+}
+
+.todo-row.done .todo-text {
+  text-decoration: line-through;
+  color: var(--muted);
+}
+
+.todo-meta {
+  display: flex;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.todo-pill {
+  border: 0;
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: lowercase;
+}
+
+.todo-pill.high {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger);
+}
+
+.todo-pill.medium {
+  background: color-mix(in srgb, var(--warn) 20%, transparent);
+  color: var(--warn);
+}
+
+.todo-pill.low {
+  background: color-mix(in srgb, var(--ok) 18%, transparent);
+  color: var(--ok);
+}
+
+.todo-pill.overdue {
+  background: var(--danger);
+  color: #fff;
+  font-weight: 700;
+}
+
+.todo-empty {
+  color: var(--muted);
+  padding: 18px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  text-align: center;
+  font-size: 12px;
+}
+
+.todo-add {
+  padding: 4px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--surface-2);
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+.todo-add:focus-within {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.todo-add input[type="text"] {
+  flex: 1;
+  min-width: 60px;
+  padding: 4px 6px;
+  border: 0;
+  background: transparent;
+}
+
+.todo-add input[type="text"]:focus {
+  box-shadow: none;
+}
+
+.todo-add select,
+.todo-add input[type="date"] {
+  background: var(--surface);
+  border-color: transparent;
+}
+
+.todo-add select,
+.todo-add input[type="date"] {
+  font-size: 12px;
+  padding: 3px 6px;
+  max-width: 132px;
+}
+
+.todo-add button {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  padding: 0;
+  border-color: transparent;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 1;
+  transition:
+    background var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
+}
+
+.todo-add button:hover {
+  background: color-mix(in srgb, var(--accent) 82%, #000);
+  border-color: transparent;
+  box-shadow: 0 4px 12px color-mix(in srgb, var(--accent) 30%, transparent);
+  transform: translateY(-1px);
+}
+
+.todo-add button:active {
+  transform: translateY(0) scale(0.96);
+}
+
+.todo-check {
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  transition: transform var(--fast) var(--ease);
+}
+
+.todo-check:active {
+  transform: scale(0.9);
+}
+
+.todo-delete,
+.todo-edit {
+  border: 0;
+  background: transparent;
+  padding: 2px 4px;
+  color: var(--muted);
+  border-radius: 6px;
+  line-height: 1;
+}
+
+.todo-delete:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.todo-edit:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.todo-clear {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.todo-clear:hover {
+  background: transparent;
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------- smart notch */
+
+.notch-root {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+
+.notch-root:not(.expanded) .notch-bar {
+  flex: 1 1 auto;
+}
+
+.notch-root.expanded .notch-bar {
+  height: var(--notch-thickness, 44px);
+}
+
+.notch-root[data-placement^="bottom"] {
+  flex-direction: column-reverse;
+}
+
+.notch-bar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 0 13px;
+  background: linear-gradient(
+    180deg,
+    color-mix(
+      in srgb,
+      color-mix(in srgb, var(--surface) 97%, #fff 3%) var(--module-glass-strong),
+      transparent
+    ),
+    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+  );
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    var(--shadow);
+  white-space: nowrap;
+}
+
+.notch-dot {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  cursor: grab;
+  transition:
+    box-shadow 0.15s ease,
+    transform 0.15s ease;
+}
+
+.notch-dot:hover {
+  box-shadow: 0 0 0 5px var(--accent-soft);
+  transform: scale(1.08);
+}
+
+.notch-name {
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.notch-chip {
+  min-width: 0;
+  padding: 2px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.notch-chip:hover {
+  background: var(--surface-2);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+/* Only the media title may consume the remaining collapsed width; the small
+   RAM/network/timer chips keep their natural size instead of all becoming
+   ellipsized together. */
+.notch-chip:not(.notch-media-chip) {
+  flex: 0 0 auto;
+}
+
+.notch-media-chip {
+  flex: 1 1 auto;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-clock {
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.notch-panel {
+  width: 100%;
+  max-height: calc(100% - var(--notch-thickness, 44px) - 6px);
+  overflow-y: auto;
+  padding: 12px;
+  transform-origin: top center;
+  background: linear-gradient(
+    180deg,
+    color-mix(
+      in srgb,
+      color-mix(in srgb, var(--surface) 97%, #fff 2%) var(--module-glass-strong),
+      transparent
+    ),
+    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+  );
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    var(--shadow);
+  animation: notch-panel-in var(--med) var(--ease) both;
+}
+
+.notch-root[data-placement^="bottom"] .notch-panel {
+  transform-origin: bottom center;
+  animation-name: notch-panel-up;
+}
+
+@keyframes notch-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes notch-panel-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.notch-panel.closing {
+  animation: notch-panel-out 150ms var(--ease) both;
+}
+
+.notch-root[data-placement^="bottom"] .notch-panel.closing {
+  animation-name: notch-panel-out-up;
+}
+
+@keyframes notch-panel-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.99);
+  }
+}
+
+@keyframes notch-panel-out-up {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(4px) scale(0.99);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes section-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.notch-tabs,
+.notch-section-row,
+.notch-chips {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.notch-tabs {
+  gap: 2px;
+  padding: 3px;
+  margin-bottom: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+}
+
+.notch-tabs button {
+  padding: 3px 9px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 12px;
+  transition:
+    background var(--fast) var(--ease),
+    border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease);
+}
+
+.notch-tabs button:hover {
+  background: color-mix(in srgb, var(--surface) 60%, transparent);
+  border-color: transparent;
+  color: var(--fg);
+}
+
+.notch-tabs button.active {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--fg);
+  font-weight: 650;
+  outline: none;
+  box-shadow: var(--shadow-soft);
+}
+
+.notch-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: calc(13px * var(--notch-scale, 1));
+  animation: fade-in 180ms var(--ease) both;
+}
+
+.notch-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.notch-title::before {
+  content: "";
+  width: 3px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.notch-muted {
+  color: var(--muted);
+}
+
+.notch-meter {
+  display: block;
+  width: 100%;
+  height: 6px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.notch-meter > i {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 82%, #000),
+    var(--accent)
+  );
+}
+
+.notch-run-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.notch-run-list button {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+
+.notch-run-list button:hover {
+  background: var(--surface-2);
+}
+
+.notch-run-list button.selected {
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.notch-media-art {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border: 0;
+  border-radius: 10px;
+}
+
+.notch-media-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
+.notch-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 200px;
+  overflow: auto;
+}
+
+.notch-list-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  text-align: left;
+}
+
+.notch-list-row:hover {
+  background: var(--surface-2);
+}
+
+.notch-clip-text {
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-timer-row {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.notch-timer-row > span {
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  margin-right: 4px;
+}
+
+/* ---------------------------------------------------------------- status bar */
+
+.sb-root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sb-root.bottom {
+  justify-content: flex-end;
+}
+
+.sb-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  height: var(--sb-thick, 40px);
+  padding: 0 14px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface) var(--module-glass-strong), transparent),
+    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+  );
+  border-bottom: 1px solid var(--line);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    var(--shadow-soft);
+  backdrop-filter: blur(18px) saturate(1.15);
+}
+
+.sb-root.bottom .sb-bar {
+  border-bottom: 0;
+  border-top: 1px solid var(--line);
+}
+
+.sb-zone {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sb-chip {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  transition:
+    background 0.12s ease,
+    color 0.12s ease;
+}
+
+.sb-chip:hover {
+  background: var(--surface-2);
+  border-color: transparent;
+}
+
+.sb-label {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.sb-track {
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sb-handle {
+  padding: 0 3px;
+  cursor: grab;
+  color: var(--muted);
+  opacity: 0.7;
+  letter-spacing: -2px;
+}
+
+/* ------------------------------------------------------------------ settings */
+
+body[data-module="settings"] {
+  background:
+    radial-gradient(
+      1100px 520px at 18% -12%,
+      color-mix(in srgb, var(--accent) 10%, transparent),
+      transparent 62%
+    ),
+    var(--bg);
+}
+
+body[data-module="settings"] #root {
+  height: 100vh;
+  padding: 0;
+  max-width: none;
+}
+
+.settings-app {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
 }
 
-/* Glass surface used by widgets and panels */
-.glass {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  backdrop-filter: blur(22px) saturate(150%);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
-  transition: opacity 0.25s ease, transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+.settings-app button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: inherit;
 }
 
-/* Toggle switch — springy knob, soft glow when on, squeeze on press */
-.switch {
-  position: relative;
-  width: 42px;
-  height: 24px;
-  min-width: 42px;
-  border-radius: 999px;
-  border: 1px solid var(--border-strong);
-  background: var(--panel-solid);
-  cursor: pointer;
-  transition: background 0.25s ease, border-color 0.2s ease, box-shadow 0.2s ease;
-  padding: 0;
+.settings-app button:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent-line);
 }
-.switch::after {
+
+.settings-sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 12px 14px;
+  border-right: 1px solid var(--line);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface) 84%, transparent),
+    color-mix(in srgb, var(--surface) 70%, transparent)
+  );
+  overflow: auto;
+}
+
+.settings-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 8px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+
+.settings-brand::before {
+  content: "";
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.settings-search input {
+  width: 100%;
+  padding: 7px 10px;
+  border-radius: 10px;
+}
+
+.settings-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.settings-nav button {
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  text-align: left;
+  font-weight: 500;
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease);
+}
+
+.settings-nav button:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.settings-nav button.active {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 86%, #fff),
+    var(--accent)
+  );
+  color: var(--accent-ink);
+  font-weight: 600;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 8px 18px color-mix(in srgb, var(--accent) 26%, transparent);
+}
+
+.settings-sidebar-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  margin-top: auto;
+  padding: 0 4px;
+}
+
+.settings-sidebar-footer button {
+  width: 100%;
+  background: transparent;
+  border-color: var(--line);
+}
+
+.settings-sidebar-note {
+  color: var(--muted);
+  font-size: 11px;
+  padding: 0 4px;
+}
+
+.settings-section {
+  animation: section-in var(--med) var(--ease) both;
+}
+
+.settings-main {
+  padding: 24px 28px 56px;
+  overflow: auto;
+}
+
+.settings-header,
+.settings-group,
+.settings-empty {
+  max-width: 980px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.settings-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+}
+
+.settings-header h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.settings-header p {
+  margin: 0;
+  color: var(--muted);
+  max-width: 62ch;
+}
+
+.settings-actions {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.settings-group {
+  margin-bottom: 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--surface) 94%, transparent);
+  box-shadow: var(--shadow-soft);
+  overflow: hidden;
+  transition:
+    border-color var(--med) var(--ease),
+    box-shadow var(--med) var(--ease),
+    transform var(--med) var(--ease);
+}
+
+.settings-group:hover {
+  border-color: color-mix(in srgb, var(--line) 65%, var(--accent));
+  box-shadow: var(--shadow-soft), 0 0 0 3px color-mix(in srgb, var(--accent) 6%, transparent);
+  transform: translateY(-1px);
+}
+
+.settings-group[hidden] {
+  display: none;
+}
+
+.settings-group-head {
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+
+.settings-group-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.settings-group-head h2::before {
+  content: "";
+  width: 3px;
+  height: 12px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.settings-group-head p {
+  margin: 2px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.settings-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 13px 14px;
+}
+
+.setting-row {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: 10px 16px;
+  align-items: center;
+  padding: 6px 8px;
+  margin: -3px -8px;
+  border-radius: 9px;
+  transition: background var(--fast) var(--ease);
+}
+
+.setting-row:hover {
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+
+.setting-label span {
+  display: block;
+}
+
+.setting-label small {
+  display: block;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.setting-control {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.setting-control > input[type="text"],
+.setting-control > input[type="number"],
+.setting-control > input[type="search"],
+.setting-control > select {
+  flex: 1 1 160px;
+  min-width: 0;
+  padding: 5px 8px;
+}
+
+.setting-control > input[type="range"] {
+  flex: 1 1 200px;
+}
+
+.setting-control > input[type="color"] {
+  width: 46px;
+  height: 28px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.setting-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+  gap: 7px 14px;
+}
+
+.setting-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--fg);
+}
+
+.setting-toggle.is-disabled {
+  cursor: default;
+  opacity: 0.48;
+}
+
+.setting-toggle.is-disabled input[type="checkbox"] {
+  cursor: default;
+}
+
+/* Minimal switch treatment for settings checkboxes. */
+.setting-toggle input[type="checkbox"] {
+  appearance: none;
+  width: 30px;
+  height: 17px;
+  flex: 0 0 30px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-2);
+  position: relative;
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.setting-toggle input[type="checkbox"]::after {
   content: "";
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 18px;
-  height: 18px;
+  width: 11px;
+  height: 11px;
   border-radius: 50%;
   background: var(--muted);
   transition:
-    transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1),
-    width 0.15s ease,
-    background 0.2s ease;
+    transform 0.15s ease,
+    background 0.15s ease;
 }
-.switch.on {
+
+.setting-toggle input[type="checkbox"]:checked {
   background: var(--accent);
   border-color: transparent;
-  box-shadow: 0 0 10px -2px color-mix(in srgb, var(--accent) 65%, transparent);
 }
-.switch.on::after {
-  transform: translateX(18px);
+
+.setting-toggle input[type="checkbox"]:checked::after {
+  transform: translateX(13px);
   background: #fff;
 }
-/* press feedback: the knob stretches toward the other side (squish) */
-.switch:not(.on):active::after { width: 22px; }
-.switch.on:active::after { transform: translateX(14px);
-  width: 22px; }
-.switch:hover { border-color: var(--muted); }
-.switch.on:hover {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 20%, transparent);
+
+.setting-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
-/* Styled range slider */
-input[type="range"] {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 100%;
-  height: 4px;
-  border-radius: 4px;
-  background: var(--border-strong);
-  outline: none;
+.setting-list-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
-input[type="range"]::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 15px;
-  height: 15px;
+
+.setting-list-row > span {
+  flex: 1;
+  min-width: 100px;
+  overflow-wrap: anywhere;
+}
+
+.setting-list-row > input[type="text"] {
+  flex: 1 1 140px;
+  min-width: 0;
+  padding: 4px 7px;
+}
+
+.wallpaper-thumb {
+  display: block;
+  flex: 0 0 auto;
+  width: 96px;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  pointer-events: none;
+}
+
+.wallpaper-thumb-web {
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+}
+
+.notch-module-list {
+  display: flex;
+  flex-direction: column;
+  margin: -5px -7px;
+}
+
+.notch-module-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 11px;
+  align-items: center;
+  min-width: 0;
+  padding: 10px 8px;
+  border-radius: 10px;
+  transition: background var(--fast) var(--ease);
+}
+
+.notch-module-row + .notch-module-row {
+  border-top: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
+  border-radius: 0;
+}
+
+.notch-module-row:hover {
+  background: color-mix(in srgb, var(--surface-2) 55%, transparent);
+}
+
+.notch-module-row.is-planned {
+  opacity: 0.62;
+}
+
+.notch-module-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.notch-module-icon svg {
+  width: 19px;
+  height: 19px;
+}
+
+.notch-module-copy {
+  min-width: 0;
+}
+
+.notch-module-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.notch-module-heading strong {
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-module-copy p {
+  margin: 1px 0 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.35;
+}
+
+.notch-module-badge {
+  flex: 0 0 auto;
+  padding: 1px 5px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.setting-empty {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-empty {
+  color: var(--muted);
+  padding: 12px 2px;
+}
+
+/* ------------------------------------------------- module shared behaviours */
+
+/* Overlay modules are desktop widgets, not documents. A press or drag on a
+   surface must not leave a text selection behind; form fields stay editable. */
+body[data-module="clock"],
+body[data-module="todo"],
+body[data-module="notch"],
+body[data-module="statusbar"],
+body[data-module="wallpaper"],
+body[data-module="edgelight"] {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body[data-module="clock"] input,
+body[data-module="clock"] textarea,
+body[data-module="todo"] input,
+body[data-module="todo"] textarea,
+body[data-module="notch"] input,
+body[data-module="notch"] textarea,
+body[data-module="statusbar"] input,
+body[data-module="statusbar"] textarea,
+body[data-module] [contenteditable="true"] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.module-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.todo-search {
+  width: 100%;
+  padding: 6px 9px;
+  border-radius: 9px;
+}
+
+.todo-row.editing {
+  flex-wrap: wrap;
+  border-color: var(--accent-line);
+}
+
+.todo-row.editing input[type="text"] {
+  flex: 1 1 120px;
+  min-width: 0;
+}
+
+.sb-window {
+  max-width: 320px;
+  overflow: hidden;
+}
+
+@media (max-width: 760px) {
+  .settings-app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .settings-sidebar {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .settings-brand {
+    display: none;
+  }
+
+  .settings-nav {
+    flex-direction: row;
+    overflow-x: auto;
+  }
+
+  .settings-sidebar-footer {
+    margin-top: 0;
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .settings-sidebar-note {
+    display: none;
+  }
+
+  .setting-row {
+    grid-template-columns: 1fr;
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+/* ------------------------------------------------ opened notch: quiet island */
+
+.notch-root {
+  gap: 0;
+}
+
+.notch-bar {
+  transition:
+    border-radius var(--fast) var(--ease),
+    background var(--fast) var(--ease),
+    padding var(--fast) var(--ease);
+}
+
+.notch-root.expanded .notch-bar {
+  justify-content: flex-start;
+  padding: 0 16px;
+  border-radius: 20px 20px 0 0;
+  border-bottom-color: transparent;
+  background: linear-gradient(
+    180deg,
+    color-mix(
+      in srgb,
+      color-mix(in srgb, var(--surface) 97%, #fff 2%) var(--module-glass-strong),
+      transparent
+    ),
+    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 -6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.notch-root.expanded .notch-bar .notch-chip {
+  display: none;
+}
+
+.notch-root.expanded .notch-bar .notch-clock {
+  margin-left: auto;
+}
+
+.notch-root.expanded[data-placement^="bottom"] .notch-bar {
+  border-radius: 0 0 20px 20px;
+  border-top-color: transparent;
+  border-bottom-color: var(--line);
+}
+
+.notch-panel {
+  width: 100%;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--line);
+  border-top: 0;
+  border-radius: 0 0 20px 20px;
+  background: linear-gradient(
+    180deg,
+    color-mix(
+      in srgb,
+      color-mix(in srgb, var(--surface) 97%, #fff 2%) var(--module-glass-strong),
+      transparent
+    ),
+    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    var(--shadow);
+  transform-origin: top center;
+  animation: island-in var(--med) var(--ease) both;
+}
+
+.notch-root[data-placement^="bottom"] .notch-panel {
+  border-top: 1px solid var(--line);
+  border-bottom: 0;
+  border-radius: 20px 20px 0 0;
+  transform-origin: bottom center;
+  animation-name: island-up;
+}
+
+.notch-nav {
+  position: sticky;
+  top: -10px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: -10px -12px 12px;
+  padding: 10px 12px 9px;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface) 96%, transparent),
+    color-mix(in srgb, var(--surface) 82%, transparent)
+  );
+  backdrop-filter: blur(20px) saturate(1.15);
+}
+
+.notch-tabs {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  overflow-x: auto;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  scrollbar-width: none;
+}
+
+.notch-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.notch-tabs button {
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11.5px;
+  font-weight: 550;
+  white-space: nowrap;
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease);
+}
+
+.notch-tabs button:hover {
+  background: color-mix(in srgb, var(--surface-2) 70%, transparent);
+  color: var(--fg);
+}
+
+.notch-tabs button.active {
+  background: color-mix(in srgb, var(--accent) 17%, var(--surface));
+  color: var(--fg);
+  font-weight: 650;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--accent) 26%, transparent),
+    0 2px 8px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.notch-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 2px;
+  padding-left: 8px;
+  border-left: 1px solid color-mix(in srgb, var(--line) 75%, transparent);
+}
+
+.notch-actions button {
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 550;
+  transition:
+    background var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.notch-actions button:hover {
+  background: var(--surface-2);
+  color: var(--fg);
+}
+
+.notch-actions button.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.notch-home {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(246px, 1fr));
+  gap: 10px;
+  align-items: stretch;
+}
+
+.notch-cell {
+  display: flex;
+  min-width: 0;
+}
+
+.notch-cell > .notch-section {
+  flex: 1;
+  height: 100%;
+}
+
+.notch-detail {
+  width: 100%;
+}
+
+.notch-detail > .notch-section {
+  width: 100%;
+}
+
+.notch-empty {
+  grid-column: 1 / -1;
+  padding: 24px 16px;
+  border: 1px dashed color-mix(in srgb, var(--line) 80%, transparent);
+  border-radius: 15px;
+  background: color-mix(in srgb, var(--surface-2) 28%, transparent);
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.notch-section {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 13px 13px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 15px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-2) 54%, transparent),
+    color-mix(in srgb, var(--surface-2) 30%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.045),
+    0 8px 20px rgba(0, 0, 0, 0.08);
+  font-size: 12.5px;
+  zoom: var(--notch-scale, 1);
+  animation: fade-in 180ms var(--ease) both;
+  transition:
+    border-color var(--fast) var(--ease),
+    background var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease);
+}
+
+.notch-section::before {
+  content: "";
+  position: absolute;
+  inset: 0 14px auto;
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 52%, transparent),
+    transparent 68%
+  );
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+.notch-section:hover {
+  border-color: color-mix(in srgb, var(--line) 55%, var(--accent));
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-2) 62%, transparent),
+    color-mix(in srgb, var(--surface-2) 34%, transparent)
+  );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 10px 24px rgba(0, 0, 0, 0.1);
+}
+
+.notch-title {
+  gap: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  color: color-mix(in srgb, var(--muted) 92%, transparent);
+}
+
+.notch-title::before {
+  width: 4px;
+  height: 4px;
   border-radius: 50%;
   background: var(--accent);
-  border: 2px solid rgba(255, 255, 255, 0.7);
-  cursor: pointer;
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.25); }
-input[type="range"]:focus-visible::-webkit-slider-thumb {
-  transform: scale(1.25);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent);
-}
-input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.15); }
-
-button, input, select {
-  font-family: inherit;
-  font-size: 13px;
-  color: var(--text);
+  opacity: 0.75;
 }
 
-input[type="text"], input[type="url"], select, input[type="date"] {
-  background: var(--panel-solid);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  outline: none;
-  transition: border-color 0.15s ease;
-}
-input[type="text"]:focus, input[type="url"]:focus, select:focus, input[type="date"]:focus {
-  border-color: var(--accent);
+.notch-muted {
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.45;
 }
 
-.btn {
-  background: var(--panel-solid);
-  border: 1px solid var(--border-strong);
-  border-radius: var(--radius-sm);
-  padding: 7px 14px;
-  cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.1s ease;
-}
-.btn:hover { background: var(--panel-hover); border-color: var(--accent); }
-.btn:active { transform: scale(0.97); }
-.btn.primary {
-  background: var(--accent);
-  border-color: transparent;
-  color: #fff;
-}
-.btn.danger { color: var(--danger); border-color: var(--border); }
-.btn.danger:hover { border-color: var(--danger); }
-
-::-webkit-scrollbar { width: 8px; height: 8px; }
-::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
+.notch-section button {
+  padding: 5px 10px;
+  border: 1px solid color-mix(in srgb, var(--line) 58%, transparent);
   border-radius: 8px;
-  border: 2px solid transparent;
-  background-clip: padding-box;
-  transition: background 0.15s ease;
+  background: color-mix(in srgb, var(--surface) 48%, transparent);
+  color: var(--fg);
+  font-size: 11.5px;
+  transition:
+    background var(--fast) var(--ease),
+    border-color var(--fast) var(--ease),
+    color var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease);
 }
-::-webkit-scrollbar-thumb:hover {
-  background: color-mix(in srgb, var(--muted) 55%, transparent);
-  background-clip: padding-box;
-}
-::-webkit-scrollbar-track { background: transparent; }
 
-/* Calm everything for users who ask the OS for reduced motion */
-@media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
-    animation-duration: 0.01ms !important;
-    transition-duration: 0.01ms !important;
+.notch-section button:hover {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+  box-shadow: 0 3px 10px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
+.notch-run-input {
+  width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--bg) 30%, transparent);
+  font-size: 12px;
+  outline: none;
+  transition:
+    border-color var(--fast) var(--ease),
+    box-shadow var(--fast) var(--ease);
+}
+
+.notch-run-input:focus {
+  border-color: var(--accent-line);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.notch-run-list {
+  gap: 1px;
+  max-height: 190px;
+}
+
+.notch-section .notch-run-list button {
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+}
+
+.notch-section .notch-run-list button:hover {
+  background: var(--surface-2);
+}
+
+.notch-section .notch-run-list button.selected {
+  background: var(--accent-soft);
+}
+
+.notch-section .notch-rescan {
+  align-self: flex-end;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.notch-section .notch-rescan:hover {
+  color: var(--fg);
+  text-decoration: underline;
+}
+
+.notch-media-head {
+  gap: 10px;
+}
+
+.notch-media-art {
+  flex: 0 0 50px;
+  width: 50px;
+  height: 50px;
+  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  object-fit: cover;
+}
+
+.notch-media-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.notch-media-text strong,
+.notch-media-text .notch-muted {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-media-text strong {
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+}
+
+.notch-media-head button {
+  flex: 0 0 auto;
+}
+
+.notch-media-time {
+  align-self: flex-end;
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.music-lights {
+  position: relative;
+  height: 58px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--line) 64%, transparent);
+  border-radius: 12px;
+  background:
+    radial-gradient(
+      130% 170% at 50% 125%,
+      color-mix(in srgb, var(--accent) 24%, transparent),
+      transparent 64%
+    ),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--bg) 54%, transparent),
+      color-mix(in srgb, var(--surface) 20%, transparent)
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.055),
+    inset 0 -18px 30px color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.music-lights::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 18%,
+    color-mix(in srgb, var(--accent) 9%, transparent) 50%,
+    transparent 82%
+  );
+  pointer-events: none;
+}
+
+.music-lights-bars {
+  position: absolute;
+  inset: 8px 10px;
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  mask-image: linear-gradient(90deg, transparent, #000 5%, #000 95%, transparent);
+}
+
+.music-lights-bars span {
+  flex: 1 1 0;
+  min-width: 2px;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--accent) 44%, #fff) 0%,
+    var(--accent) 38%,
+    color-mix(in srgb, var(--accent) 76%, #000) 100%
+  );
+  box-shadow: 0 0 10px color-mix(in srgb, var(--accent) 32%, transparent);
+  opacity: 0.45;
+  transform: scaleY(var(--bar-peak, 0.5));
+  transform-origin: bottom;
+  transition:
+    transform 260ms var(--ease),
+    opacity 260ms var(--ease);
+}
+
+.music-lights.is-playing .music-lights-bars span {
+  animation: music-bar var(--bar-duration, 760ms) ease-in-out var(--bar-delay, 0ms) infinite
+    alternate;
+}
+
+@keyframes music-bar {
+  0% {
+    opacity: 0.42;
+    transform: scaleY(calc(var(--bar-peak, 0.6) * 0.22));
+  }
+  55% {
+    opacity: 1;
+    transform: scaleY(var(--bar-peak, 0.6));
+  }
+  100% {
+    opacity: 0.74;
+    transform: scaleY(calc(var(--bar-peak, 0.6) * 0.56));
+  }
+}
+
+.music-lights-now {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-top: 1px;
+}
+
+.music-lights-pulse {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  opacity: 0.65;
+}
+
+.music-lights-pulse.is-playing {
+  background: var(--accent);
+  opacity: 1;
+  animation: music-pulse 1.6s var(--ease) infinite;
+}
+
+@keyframes music-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 42%, transparent);
+  }
+  55% {
+    box-shadow: 0 0 0 5px transparent;
+  }
+}
+
+.music-lights-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.music-lights-copy strong,
+.music-lights-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.music-lights-copy strong {
+  font-size: 11.5px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.music-lights-copy span {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.notch-meter {
+  display: block;
+  width: 100%;
+  height: 5px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 55%, transparent);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12);
+  overflow: hidden;
+}
+
+.notch-meter::-webkit-progress-bar {
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.notch-meter::-webkit-progress-value {
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 72%, #000),
+    var(--accent)
+  );
+}
+
+.notch-meter::-moz-progress-bar {
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 72%, #000),
+    var(--accent)
+  );
+}
+
+.notch-metric {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.notch-metric strong {
+  color: var(--fg);
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-net {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface) 26%, transparent);
+  color: var(--muted);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-list {
+  gap: 1px;
+  max-height: 190px;
+}
+
+.notch-list-row {
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  font-size: 11.5px;
+  text-align: left;
+}
+
+.notch-section .notch-list-row {
+  padding: 5px 7px;
+  border: 0;
+  background: transparent;
+  font-size: 11.5px;
+}
+
+.notch-section .notch-list-row:hover {
+  background: var(--surface-2);
+}
+
+.notch-clip-text {
+  max-width: 100%;
+}
+
+.notch-timer-row {
+  gap: 4px;
+}
+
+.notch-timer-row > span {
+  margin-right: auto;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-chips {
+  gap: 5px;
+}
+
+.notch-chips button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  font-size: 11px;
+}
+
+.notch-chips button:hover {
+  background: var(--surface);
+  border-color: var(--accent-line);
+}
+
+.notch-panel.closing {
+  animation: island-out 150ms var(--ease) both;
+}
+
+.notch-root[data-placement^="bottom"] .notch-panel.closing {
+  animation-name: island-out-up;
+}
+
+@keyframes island-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes island-up {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.995);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes island-out {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(-3px) scale(0.997);
+  }
+}
+
+@keyframes island-out-up {
+  from {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(3px) scale(0.997);
+  }
+}
+
+/* ------------------------------------------- smart notch: extended widgets */
+
+.notch-volume-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 230px;
+  overflow: auto;
+}
+
+.notch-volume-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--line) 62%, transparent);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface) 30%, transparent);
+}
+
+.notch-volume-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.notch-volume-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-volume-head button {
+  flex: 0 0 auto;
+  padding: 1px 7px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.notch-volume-head button.active {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.notch-volume-value {
+  flex: 0 0 auto;
+  min-width: 32px;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.notch-volume-row input[type="range"] {
+  width: 100%;
+  height: 14px;
+  margin: 0;
+}
+
+.notch-shelf-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 14px 12px;
+  border: 1px dashed color-mix(in srgb, var(--accent-line) 76%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-soft) 34%, transparent);
+  transition:
+    border-color var(--fast) var(--ease),
+    background var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
+}
+
+.notch-shelf-zone strong {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.notch-shelf-zone span {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.notch-shelf.is-dragging .notch-shelf-zone {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  transform: scale(1.01);
+}
+
+.notch-shelf-add {
+  display: flex;
+  gap: 4px;
+}
+
+.notch-shelf-add input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+  font-size: 11.5px;
+}
+
+.notch-shelf-add button {
+  flex: 0 0 auto;
+}
+
+.notch-shelf-list {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  max-height: 170px;
+  overflow: auto;
+}
+
+.notch-shelf-row {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.notch-section .notch-shelf-item {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  text-align: left;
+}
+
+.notch-section .notch-shelf-item:hover {
+  background: var(--surface-2);
+}
+
+.notch-shelf-kind {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-size: 8px;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+}
+
+.notch-shelf-name {
+  overflow: hidden;
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-section .notch-shelf-remove {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+}
+
+.notch-section .notch-shelf-remove:hover {
+  background: color-mix(in srgb, var(--danger) 16%, transparent);
+  color: var(--danger);
+}
+
+.notch-download-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  max-height: 210px;
+  overflow: auto;
+}
+
+.notch-download {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.notch-download-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.notch-download-head span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-download-track {
+  display: block;
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--line) 55%, transparent);
+}
+
+.notch-download-track i {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  animation: download-sweep 1.25s var(--ease) infinite;
+}
+
+@keyframes download-sweep {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(360%);
+  }
+}
+
+.notch-action {
+  align-self: flex-start;
+  padding: 5px 11px !important;
+  border: 1px solid var(--accent-line) !important;
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+  font-weight: 650;
+}
+
+.notch-action.active {
+  border-color: var(--accent) !important;
+  background: var(--accent) !important;
+  color: var(--accent-ink) !important;
+}
+
+.notch-weather-now {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.notch-weather-symbol {
+  font-size: 29px;
+  line-height: 1;
+}
+
+.notch-weather-temp {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.notch-weather-temp strong {
+  font-size: 25px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-weather-temp span,
+.notch-weather-place span,
+.notch-weather-meta {
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.notch-weather-place {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+  text-align: right;
+}
+
+.notch-weather-place strong {
+  overflow: hidden;
+  font-size: 11.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-weather-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-link-button {
+  padding: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  color: var(--muted) !important;
+  font-size: 10px !important;
+}
+
+.notch-link-button:hover {
+  color: var(--fg) !important;
+  text-decoration: underline;
+}
+
+.notch-forecast-hours {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.notch-forecast-hour {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 40px;
+  padding: 5px 4px;
+  border: 1px solid color-mix(in srgb, var(--line) 55%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface) 32%, transparent);
+  font-size: 9.5px;
+}
+
+.notch-forecast-hour span:first-child {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-forecast-hour strong {
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-forecast-days {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 150px;
+  overflow: auto;
+}
+
+.notch-forecast-day {
+  display: grid;
+  grid-template-columns: 42px 22px minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  padding: 4px 6px;
+  border-radius: 6px;
+  font-size: 10.5px;
+}
+
+.notch-forecast-day:hover {
+  background: var(--surface-2);
+}
+
+.notch-forecast-day span:first-child {
+  color: var(--muted);
+}
+
+.notch-forecast-day strong {
+  justify-self: end;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------- edge light overlay */
+
+body[data-module="edgelight"] {
+  overflow: hidden;
+  background: transparent;
+  pointer-events: none;
+}
+
+.edge-light-root {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.edge-light-glow,
+.edge-light-inner {
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  pointer-events: none;
+}
+
+.edge-light-glow {
+  border: 10px solid color-mix(in srgb, var(--accent) 78%, #fff 22%);
+  box-shadow:
+    inset 0 0 42px 14px color-mix(in srgb, var(--accent) 72%, transparent),
+    0 0 46px 4px color-mix(in srgb, var(--accent) 64%, transparent);
+  opacity: 0.82;
+  animation: edge-light-breathe 4.8s ease-in-out infinite alternate;
+}
+
+.edge-light-inner {
+  inset: 7px;
+  border: 2px solid color-mix(in srgb, var(--accent) 48%, transparent);
+  box-shadow: inset 0 0 26px color-mix(in srgb, var(--accent) 34%, transparent);
+  opacity: 0.7;
+  animation: edge-light-breathe 3.6s ease-in-out -1.2s infinite alternate-reverse;
+}
+
+@keyframes edge-light-breathe {
+  from {
+    opacity: 0.42;
+    filter: blur(0.4px);
+  }
+  to {
+    opacity: 0.92;
+    filter: blur(0);
   }
 }

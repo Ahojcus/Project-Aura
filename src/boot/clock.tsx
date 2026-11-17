@@ -1,9 +1,10 @@
 import { createRoot } from "react-dom/client";
+import { ClockModule } from "../modules/clock/ClockModule";
 import { setupSettingsSync } from "../lib/sync";
 import "../styles/base.css";
-import "../styles/widgets.css";
-import { ClockModule } from "../modules/clock/ClockModule";
 
-void setupSettingsSync("clock");
+document.body.dataset.module = "clock";
 
-createRoot(document.getElementById("root")!).render(<ClockModule />);
+void setupSettingsSync("clock").then(() => {
+  createRoot(document.getElementById("root")!).render(<ClockModule />);
+});

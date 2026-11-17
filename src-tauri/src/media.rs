@@ -26,6 +26,7 @@ pub struct MediaInfo {
 }
 
 #[derive(Clone, Serialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct MediaArt {
     pub data_url: String,
 }
@@ -196,11 +197,13 @@ fn extract_art(
     if bytes.is_empty() {
         return Err("empty thumbnail".into());
     }
-    let mime = if bytes[..4] == [0x89, 0x50, 0x4E, 0x47] {
+    // A thumbnail can be shorter than an image header; starts_with avoids the
+    // panic the old fixed-size slice indexing caused on tiny/corrupt artwork.
+    let mime = if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         "image/png"
-    } else if bytes[..3] == [0xFF, 0xD8, 0xFF] {
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
         "image/jpeg"
-    } else if bytes[..4] == [b'R', b'I', b'F', b'F'] {
+    } else if bytes.starts_with(b"RIFF") {
         "image/webp"
     } else {
         "image/png"

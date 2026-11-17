@@ -12,14 +12,14 @@ export interface Task {
   createdAt: number;
 }
 
-const STORAGE_KEY = "aura.todo.v1";
+const STORAGE_KEY = "aura.todo.v2";
 
 function load(): Task[] {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw) as Task[];
   } catch {
-    /* ignore */
+    /* ignore corrupt data */
   }
   return [];
 }
@@ -36,7 +36,7 @@ function sortTasks(tasks: Task[]): Task[] {
   const rank: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
   return [...tasks].sort((a, b) => {
     if (a.done !== b.done) return a.done ? 1 : -1;
-    if (a.due && b.due) return a.due < b.due ? -1 : 1;
+    if (a.due && b.due && a.due !== b.due) return a.due < b.due ? -1 : 1;
     if (a.due && !b.due) return -1;
     if (!a.due && b.due) return 1;
     return rank[a.priority] - rank[b.priority] || b.createdAt - a.createdAt;
@@ -49,6 +49,11 @@ interface TodoStore {
   toggle: (id: string) => void;
   remove: (id: string) => void;
   clearDone: () => void;
+  /** Rewrite a task. Editing reopens it, matching the Django reference app. */
+  edit: (
+    id: string,
+    patch: { text: string; category: string; priority: Priority; due?: string },
+  ) => void;
 }
 
 export const useTodo = create<TodoStore>()((set, get) => ({
@@ -59,9 +64,9 @@ export const useTodo = create<TodoStore>()((set, get) => ({
     const task: Task = {
       id: crypto.randomUUID(),
       text: t,
-      category,
+      category: category || "Uncategorised",
       priority,
-      due,
+      due: due || undefined,
       done: false,
       createdAt: Date.now(),
     };
@@ -70,9 +75,7 @@ export const useTodo = create<TodoStore>()((set, get) => ({
     persist(tasks);
   },
   toggle: (id) => {
-    const tasks = sortTasks(
-      get().tasks.map((t) => (t.id === id ? { ...t, done: !t.done } : t)),
-    );
+    const tasks = sortTasks(get().tasks.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
     set({ tasks });
     persist(tasks);
   },
@@ -86,7 +89,39 @@ export const useTodo = create<TodoStore>()((set, get) => ({
     set({ tasks });
     persist(tasks);
   },
+  edit: (id, patch) => {
+    const text = patch.text.trim();
+    if (!text) return;
+    const tasks = sortTasks(
+      get().tasks.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              text,
+              category: patch.category || "Uncategorised",
+              priority: patch.priority,
+              due: patch.due || undefined,
+              done: false,
+            }
+          : t,
+      ),
+    );
+    set({ tasks });
+    persist(tasks);
+  },
 }));
+
+/** Cross-window sync of the task list (settings window and the to-do widget). */
+if (typeof window !== "undefined") {
+  window.addEventListener("storage", (e) => {
+    if (e.key !== STORAGE_KEY || !e.newValue) return;
+    try {
+      useTodo.setState({ tasks: JSON.parse(e.newValue) as Task[] });
+    } catch {
+      /* ignore corrupt payload */
+    }
+  });
+}
 
 export function isOverdue(task: Task): boolean {
   if (!task.due || task.done) return false;

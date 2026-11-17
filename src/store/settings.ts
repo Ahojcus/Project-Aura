@@ -1,98 +1,176 @@
 import { create } from "zustand";
-import { useEffect, type CSSProperties } from "react";
+import { useEffect } from "react";
+import { getWindowLabel, hasTauri, invoke, windowMonitor } from "../lib/bridge";
+import { useDisplaysVersion } from "../lib/runtime";
 
-export type ModuleKey = "wallpaper" | "clock" | "notch" | "todo" | "start";
+export type ModuleKey = "wallpaper" | "clock" | "notch" | "todo" | "statusbar";
 
-/** Per-module window behavior — layer, position, input mode, size, typography. */
+/** Per-module native window behavior. */
 export interface WindowConf {
-  /** Z-order: always-on-top, plain overlay, or pinned to the very bottom. */
   level: "bottommost" | "normal" | "topmost";
-  /** Target display: null = primary, otherwise the monitor's global origin
-   *  coordinates (its stable identity from the get_monitors enumeration). */
+  /** Target display origin (null = primary). */
   monitor: { x: number; y: number } | null;
-  /** Manual screen position (logical px, within the chosen display). */
+  /** Additional displays that duplicate this module's window. */
+  extraMonitors: { x: number; y: number }[];
+  /** Manual position in logical px within the chosen display. */
   x: number | null;
   y: number | null;
-  /** Mouse clicks pass through the window (can't drag or click while on). */
   clickThrough: boolean;
-  /** Show a grab handle / drag region. */
   draggable: boolean;
-  /** Capacity: window size multipliers of the default (clock/todo). */
+  /** Window size multiplier of the module's default size. */
   capacity: { width: number; height: number };
-  /** Element scale: zoom of the widget's internal elements (.controls,
-   *  chips, rows …) — the window itself and the text-size knob stay aside.
-   *  It is a UI zoom only and never touches the native window size. */
-  elementScale: number;
-  /** Text style: family ("" = inherit), size scale, weight (0 = inherit),
-   *  color ("" = inherit). */
-  text: { family: string; sizeScale: number; weight: number; color: string };
 }
 
-/** Shared defaults; per-module tweaks below. */
 function windowConf(level: WindowConf["level"]): WindowConf {
   return {
     level,
     monitor: null,
+    extraMonitors: [],
     x: null,
     y: null,
     clickThrough: false,
     draggable: true,
     capacity: { width: 1, height: 1 },
-    elementScale: 1,
-    text: { family: "", sizeScale: 1, weight: 0, color: "" },
   };
+}
+
+export type NotchWidgetKey =
+  | "run"
+  | "media"
+  | "musicLights"
+  | "monitors"
+  | "timer"
+  | "bluetooth"
+  | "clipboard"
+  | "shortcuts"
+  | "volume"
+  | "shelf"
+  | "downloads"
+  | "cloak"
+  | "weather"
+  | "forecast"
+  | "edgeLight";
+
+export const NOTCH_MODULE_LABELS: Record<NotchWidgetKey, string> = {
+  run: "Run launcher",
+  media: "Now playing",
+  musicLights: "Music lights",
+  monitors: "System stats",
+  timer: "Focus timer",
+  bluetooth: "Bluetooth devices",
+  clipboard: "Clipboard history",
+  shortcuts: "Quick shortcuts",
+  volume: "Volume mixer",
+  shelf: "Drop shelf",
+  downloads: "Download progress",
+  cloak: "Invisibility cloak",
+  weather: "Weather",
+  forecast: "Weather forecast",
+  edgeLight: "Edge light",
+};
+
+export const DEFAULT_NOTCH_MODULE_ORDER: NotchWidgetKey[] = [
+  "run",
+  "media",
+  "musicLights",
+  "volume",
+  "shelf",
+  "downloads",
+  "monitors",
+  "weather",
+  "forecast",
+  "timer",
+  "bluetooth",
+  "clipboard",
+  "shortcuts",
+  "cloak",
+  "edgeLight",
+];
+
+export interface WallpaperEntry {
+  name: string;
+  path: string;
+  kind: "image" | "video" | "web";
+}
+
+/** Per-wallpaper visual and playback adjustments, keyed by source path. */
+export interface WallpaperLook {
+  /** Color saturation in percent (100 = unchanged). */
+  saturation: number;
+  /** Gamma exponent (1 = unchanged, lower brightens, higher darkens). */
+  gamma: number;
+  /** Hue rotation in degrees (0 = unchanged). */
+  hue: number;
+  /** Playback-speed multiplier for video wallpapers (1 = unchanged). */
+  speed: number;
+}
+
+export const DEFAULT_WALLPAPER_LOOK: WallpaperLook = {
+  saturation: 100,
+  gamma: 1,
+  hue: 0,
+  speed: 1,
+};
+
+export function getWallpaperLook(
+  looks: Record<string, WallpaperLook> | undefined,
+  path: string,
+): WallpaperLook {
+  return { ...DEFAULT_WALLPAPER_LOOK, ...(looks?.[path] ?? {}) };
 }
 
 export interface Settings {
   theme: "dark" | "light";
   accent: string;
-  /** Launch Aura automatically at sign-in (Windows registry Run entry). */
   launchOnStartup: boolean;
   modules: Record<ModuleKey, boolean>;
+  moduleOrder: ModuleKey[];
   clock: {
     layout: "digital" | "analog" | "minimal";
     format12h: boolean;
-    timezone: string | null; // null = system timezone
+    timezone: string | null;
     showDate: boolean;
     showSeconds: boolean;
-    /** Glass surface behind the widget — off = text floats directly on the wallpaper. */
-    background: boolean;
+    showYear: boolean;
     win: WindowConf;
   };
   wallpaper: {
-    kind: "none" | "image" | "video";
+    kind: "none" | "image" | "video" | "web";
     path: string;
-    /** Imported wallpaper library — copies live in the app data folder. */
-    library: { name: string; path: string; kind: "image" | "video" }[];
-    /** Per-display wallpaper overrides, keyed by that display's origin
-     *  ("<x>,<y>"). A display without an entry follows the main wallpaper
-     *  chosen above — that's how single-monitor setups keep working. */
-    displays?: Record<string, { path: string; kind: "image" | "video" }>;
+    library: WallpaperEntry[];
+    /** Per-wallpaper adjustments keyed by source path. */
+    looks: Record<string, WallpaperLook>;
+    /** Per-display overrides keyed by that display's origin ("<x>,<y>"). */
+    displays: Record<string, { path: string; kind: "image" | "video" | "web" }>;
     win: WindowConf;
     fit: "cover" | "contain" | "fill";
-    scale: number; // 0.5 .. 3
-    offsetX: number; // percent -100..100
+    scale: number;
+    offsetX: number;
     offsetY: number;
-    playbackRate: number; // 0.25 .. 2
-    volume: number; // 0 .. 1
+    playbackRate: number;
+    volume: number;
     muted: boolean;
-    /** Dark overlay strength over the wallpaper, 0 (off) .. 100. */
-    dimmer: number;
+    pauseWhen: "off" | "maximized" | "fullscreen";
+    pauseOnBattery: boolean;
+    muteWithMedia: boolean;
+    /** Loop video wallpapers (off = play once and hold the last frame). */
+    loop: boolean;
   };
   notch: {
-    widgets: {
-      media: boolean;
-      monitors: boolean;
-      shortcuts: boolean;
-      clipboard: boolean;
-      timer: boolean;
-      bluetooth: boolean;
-      run: boolean;
-    };
+    widgets: Record<NotchWidgetKey, boolean>;
+    moduleOrder: NotchWidgetKey[];
+    moduleScale: Record<NotchWidgetKey, number>;
     shortcuts: { name: string; target: string; icon: string }[];
-    /** Layout engine: island/notch shape or a full desktop bar. */
+    /** Files and text snippets parked in the drop shelf. */
+    shelf: { id: string; name: string; target: string; kind: "file" | "text" }[];
+    /** Empty uses approximate network location; otherwise a city or "lat,lon". */
+    weatherLocation: string;
+    weatherUnit: "c" | "f";
+    /** Hide the clock, to-do and status bar until the cloak is lifted. */
+    cloakActive: boolean;
+    /** Show the full-screen edge glow overlay. */
+    edgeLightActive: boolean;
     layout: "notch" | "bar";
-    /** Where the strip sits along the screen edges/corners. */
     placement:
       | "top-left"
       | "top-center"
@@ -100,130 +178,84 @@ export interface Settings {
       | "bottom-left"
       | "bottom-center"
       | "bottom-right";
-    /** Animated background effect (see `NotchFx`, music-reactive subset in
-     *  NOTCH_FX_MUSIC — those animate only while something is playing). */
-    fx: NotchFx;
-    /** Glass surface behind pill + panel — off lets panels float over the
-     *  desktop with just a soft shadow. */
-    background: boolean;
-    /** Independent size controls: px in notch mode, % of screen width in bar mode. */
     length: number;
     thickness: number;
-    /** Collapsed (44px) pill content — fully independent from the expanded
-     *  panel's widget tabs: these flags ONLY affect the minimized strip, so a
-     *  chip can show there while its panel is hidden and vice versa. */
     collapsed: {
-      showName: boolean;   // the "Aura" wordmark
-      showClock: boolean;  // live time
-      showTimer: boolean;  // ⏱ mini timer chip (needs the timer widget to run)
-      showMem: boolean;    // RAM usage chip
-      showNet: boolean;    // download-rate chip
-      showMedia: boolean;  // mini progress bar / EQ for the current track
+      showName: boolean;
+      showClock: boolean;
+      showTimer: boolean;
+      showMem: boolean;
+      showNet: boolean;
+      showMedia: boolean;
     };
-    /** Visual quality of the glass surface */
-    appearance: {
-      blur: number;          // backdrop blur, px (0 = off, cheaper)
-      glassOpacity: number;  // 0.3 .. 1 — how solid the glass reads
-      radius: number;        // corner radius, px
-      glow: number;          // 0 .. 1 accent halo intensity
-      ambientArt: boolean;   // blurred album art ambience behind the media card
-      /** Ambient light color: "" = auto (follow the accent), otherwise a
-       *  CSS color that recolors the glow around/behind the notch. */
-      ambientColor: string;
-    };
-    /** Motion & hover behavior */
-    animation: {
-      speed: number;         // 0.25 .. 2 — multiplier; <1 snappier, >1 dramatic
-      stagger: boolean;      // sections cascade on reveal
-      hoverDelay: number;    // ms of hover before the notch opens
-      closeDelay: number;    // ms of grace after the pointer leaves
-    };
-    /** Window layer / input behavior / typography (capacity is the layout
-     *  engine's length & thickness, so only position may override here). */
+    animation: { hoverDelay: number; closeDelay: number };
+    /** Open the panel on hover; off = click the strip instead. */
+    openOnHover: boolean;
+    /** Hide the strip while a fullscreen app is in front. */
+    hideOnFullscreen: boolean;
+    /** Focus-timer preset buttons, in minutes. */
+    timerPresets: number[];
     win: WindowConf;
   };
   todo: {
     categories: string[];
-    /** "smart" = by priority/due date; "created" = newest first, done last. */
     sort: "smart" | "created";
-    /** Glass surface behind the widget — off = the list floats freely. */
-    background: boolean;
+    defaultPriority: "low" | "medium" | "high";
     win: WindowConf;
   };
-  /** Global hotkey that opens the settings panel from anywhere.
-   *  `combo: ""` means the builtin default (Ctrl+Shift+,); a non-empty value
-   *  replaces it with a user-chosen combination set by the recorder UI.
-   *  `enabled: false` unregisters every settings hotkey system-wide. */
+  statusbar: {
+    placement: "top" | "bottom";
+    thickness: number;
+    inset: number;
+    chips: {
+      cpu: boolean;
+      ram: boolean;
+      disk: boolean;
+      temp: boolean;
+      net: boolean;
+      volume: boolean;
+      uptime: boolean;
+      battery: boolean;
+      window: boolean;
+      media: boolean;
+      clock: boolean;
+      bluetooth: boolean;
+      downloads: boolean;
+      weather: boolean;
+    };
+    showDate: boolean;
+    showSeconds: boolean;
+    weatherLocation: string;
+    weatherUnit: "c" | "f";
+    /** Hide the bar while a fullscreen app is in front. */
+    hideOnFullscreen: boolean;
+    win: WindowConf;
+  };
   hotkey: { enabled: boolean; combo: string };
-  /** Spotlight-style launcher window (toggled by the global Alt+Space). */
-  start: {
-    /** Glass card behind the launcher — off = borderless, pure text and rows. */
-    background: boolean;
-    win: WindowConf;
-  };
 }
-
-/** Animated background styles for the Smart Notch. */
-export type NotchFx =
-  | "none"
-  | "visualizer"
-  | "waves"
-  | "synthwave"
-  | "fireflies"
-  | "aurora"
-  | "nightsky"
-  | "holographic"
-  | "topo"
-  | "liquid";
-
-export const NOTCH_FX_LABELS: Record<NotchFx, string> = {
-  none: "None",
-  visualizer: "Visualizer",
-  waves: "Waves",
-  synthwave: "Synthwave",
-  fireflies: "Fireflies",
-  aurora: "Aurora",
-  nightsky: "Night sky",
-  holographic: "Holographic",
-  topo: "Topographic",
-  liquid: "Midnight liquid",
-};
-
-export const NOTCH_FX_DESCRIPTIONS: Record<NotchFx, string> = {
-  none: "Clean glass",
-  visualizer: "Spectrum bars",
-  waves: "Tides",
-  synthwave: "Retro sun and neon grid",
-  fireflies: "Drifting sparks of light",
-  aurora: "Northern lights",
-  nightsky: "Stars and meteors",
-  holographic: "Iridescent foil sheen",
-  topo: "Slow contour lines",
-  liquid: "Dark flowing silk",
-};
-
-/** Effects that react to the playing state (move only while music plays). */
-export const NOTCH_FX_MUSIC: readonly NotchFx[] = ["visualizer", "waves", "synthwave", "liquid"];
 
 export const DEFAULT_SETTINGS: Settings = {
   theme: "dark",
   accent: "#6c7bff",
   launchOnStartup: false,
   hotkey: { enabled: true, combo: "" },
-  modules: { wallpaper: false, clock: true, notch: true, todo: true, start: false },
+  modules: { wallpaper: false, clock: true, notch: true, todo: true, statusbar: false },
+  moduleOrder: ["notch", "statusbar", "clock", "todo", "wallpaper"],
   clock: {
     layout: "digital",
     format12h: false,
     timezone: null,
     showDate: true,
     showSeconds: false,
-    background: true,
+    showYear: false,
     win: windowConf("topmost"),
   },
   wallpaper: {
     kind: "none",
     path: "",
     library: [],
+    looks: {},
+    displays: {},
     win: windowConf("bottommost"),
     fit: "cover",
     scale: 1,
@@ -232,43 +264,110 @@ export const DEFAULT_SETTINGS: Settings = {
     playbackRate: 1,
     volume: 0.6,
     muted: false,
-    dimmer: 0,
+    pauseWhen: "off",
+    pauseOnBattery: false,
+    muteWithMedia: true,
+    loop: true,
   },
   notch: {
     widgets: {
       run: true,
       media: true,
+      musicLights: false,
       monitors: true,
       shortcuts: true,
       clipboard: false,
       timer: false,
       bluetooth: false,
+      volume: false,
+      shelf: false,
+      downloads: false,
+      cloak: false,
+      weather: false,
+      forecast: false,
+      edgeLight: false,
+    },
+    moduleOrder: DEFAULT_NOTCH_MODULE_ORDER,
+    moduleScale: {
+      run: 1,
+      media: 1,
+      musicLights: 1,
+      monitors: 1,
+      timer: 1,
+      bluetooth: 1,
+      clipboard: 1,
+      shortcuts: 1,
+      volume: 1,
+      shelf: 1,
+      downloads: 1,
+      cloak: 1,
+      weather: 1,
+      forecast: 1,
+      edgeLight: 1,
     },
     shortcuts: [
-      { name: "Files", target: "shell:mycomputer", icon: "📁" },
-      { name: "GitHub", target: "https://github.com", icon: "🐙" },
+      { name: "Files", target: "shell:mycomputer", icon: "" },
+      { name: "GitHub", target: "https://github.com", icon: "" },
     ],
+    shelf: [],
+    weatherLocation: "",
+    weatherUnit: "c",
+    cloakActive: false,
+    edgeLightActive: false,
     layout: "notch",
     placement: "top-center",
-    fx: "none",
-    background: true,
-    length: 240, // px in notch mode / % of screen width in bar mode
+    length: 240,
     thickness: 44,
-    collapsed: { showName: true, showClock: false, showTimer: true, showMem: true, showNet: true, showMedia: true },
-    appearance: { blur: 30, glassOpacity: 0.86, radius: 26, glow: 0.28, ambientArt: true, ambientColor: "" },
-    animation: { speed: 1, stagger: true, hoverDelay: 120, closeDelay: 260 },
-    win: { ...windowConf("topmost"), draggable: false }, // drag by the dot only
+    collapsed: {
+      showName: true,
+      showClock: false,
+      showTimer: true,
+      showMem: true,
+      showNet: true,
+      showMedia: true,
+    },
+    animation: { hoverDelay: 120, closeDelay: 260 },
+    openOnHover: true,
+    hideOnFullscreen: true,
+    timerPresets: [5, 15, 25, 50],
+    win: { ...windowConf("topmost"), draggable: false },
   },
   todo: {
     categories: ["Personal", "Work", "Shopping"],
     sort: "smart",
-    background: true,
+    defaultPriority: "medium",
     win: windowConf("topmost"),
   },
-  start: { background: true, win: windowConf("topmost") },
+  statusbar: {
+    placement: "top",
+    thickness: 40,
+    inset: 0,
+    chips: {
+      cpu: true,
+      ram: true,
+      disk: true,
+      temp: true,
+      net: true,
+      volume: true,
+      uptime: true,
+      battery: true,
+      window: true,
+      media: true,
+      clock: true,
+      bluetooth: false,
+      downloads: false,
+      weather: false,
+    },
+    showDate: true,
+    showSeconds: false,
+    weatherLocation: "",
+    weatherUnit: "c",
+    hideOnFullscreen: true,
+    win: { ...windowConf("topmost"), draggable: false },
+  },
 };
 
-const STORAGE_KEY = "aura.settings.v1";
+const STORAGE_KEY = "aura.settings.v2";
 
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -306,81 +405,44 @@ function persist(settings: Settings) {
 
 interface SettingsStore {
   settings: Settings;
-  /** Local edit: merge patch, persist, and broadcast to all windows. */
   update: (patch: Record<string, unknown>) => void;
-  /** Incoming event from another window: apply + persist silently. */
+  /** Replace the whole settings object (reset / map deletions). */
+  setSettings: (settings: Settings) => void;
   applyRemote: (settings: Settings) => void;
+  /** Delete one display's wallpaper override.
+   *  Plain `update` deep-merges objects, so a removal cannot be expressed as
+   *  a patch — the deleted key would be merged back from the current value. */
+  removeWallpaperDisplay: (key: string) => void;
 }
 
-export const useSettings = create<SettingsStore>()((set, get) => ({
-  settings: loadSettings(),
-  update: (patch) => {
-    const settings = deepMerge(get().settings, patch);
+export const useSettings = create<SettingsStore>()((set, get) => {
+  const commit = (settings: Settings) => {
     set({ settings });
     persist(settings);
     if (hasTauri()) {
       void import("@tauri-apps/api/event").then(
-        ({ emit }) => void emit("aura:settings", { settings, from: getLabel() }),
+        ({ emit }) => void emit("aura:settings", { settings, from: getWindowLabel() }),
       );
     }
     applyCssTokens(settings);
-  },
-  applyRemote: (settings) => {
-    set({ settings });
-    persist(settings);
-    applyCssTokens(settings);
-  },
-}));
+  };
 
-/**
- * Applies a module's persisted window configuration (layer level, manual
- * coordinates, click-through, capacity size) to its desktop window whenever
- * the configuration changes. Returns CSS custom properties for the text style.
- * No-op in the plain browser preview.
- */
-export function useModuleWindow(moduleKey: ModuleKey): CSSProperties {
-  const win = useSettings((s) => s.settings[moduleKey].win);
-
-  useEffect(() => {
-    if (!hasTauri() || !win) return;
-    void import("@tauri-apps/api/core").then(({ invoke }) =>
-      invoke("window_apply", {
-        label: moduleKey,
-        level: win.level,
-        monitor: win.monitor ? [win.monitor.x, win.monitor.y] : null,
-        x: win.x,
-        y: win.y,
-        clickThrough: win.clickThrough,
-        capacity: win.capacity.width === 1 && win.capacity.height === 1 ? null : [win.capacity.width, win.capacity.height],
-      }),
-    );
-    // JSON-serialize to avoid effect churn from fresh object identities.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [moduleKey, JSON.stringify(win)]);
-
-  return textStyleVars(win);
-}
-
-/** CSS custom properties consumed by module stylesheets (font family/size/weight/color). */
-export function textStyleVars(win: WindowConf | undefined): CSSProperties {
-  if (!win) return {};
-  const style: Record<string, string | number> = {};
-  if (win.text.family) style["--tx-family"] = win.text.family;
-  if (win.text.sizeScale !== 1) style["--tx-size"] = String(win.text.sizeScale);
-  if (win.text.weight > 0) style["--tx-weight"] = String(win.text.weight);
-  if (win.text.color) style["--tx-color"] = win.text.color;
-  // Element scale → CSS zoom on the widget root (clock/todo/notch pages pin
-  // the returned style on their top-level element). Chromium in the WebView2
-  // shell scales layout coherently with zoom, so chips, rows and panels all
-  // grow/shrink together while the native window keeps its configured size.
-  if (win.elementScale !== 1) style.zoom = win.elementScale;
-  return style as CSSProperties;
-}
-
-/** True when running inside the Tauri shell (vs a plain browser preview). */
-export function hasTauri(): boolean {
-  return typeof window !== "undefined" && (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ !== undefined;
-}
+  return {
+    settings: loadSettings(),
+    update: (patch) => commit(deepMerge(get().settings, patch)),
+    setSettings: (settings) => commit(settings),
+    applyRemote: (settings) => {
+      set({ settings });
+      persist(settings);
+      applyCssTokens(settings);
+    },
+    removeWallpaperDisplay: (key) => {
+      const next = structuredClone(get().settings);
+      delete next.wallpaper.displays[key];
+      get().setSettings(next);
+    },
+  };
+});
 
 export function applyCssTokens(settings: Settings) {
   const root = document.documentElement;
@@ -388,14 +450,80 @@ export function applyCssTokens(settings: Settings) {
   root.style.setProperty("--accent", settings.accent);
 }
 
-/** Resolve the window label this renderer is serving (from its HTML entry). */
-export function getLabel(): string {
-  const path = window.location.pathname;
-  const base = path.split("/").pop() ?? "index.html";
-  if (base.startsWith("notch")) return "notch";
-  if (base.startsWith("wallpaper")) return "wallpaper";
-  if (base.startsWith("clock")) return "clock";
-  if (base.startsWith("todo")) return "todo";
-  if (base.startsWith("start")) return "start";
-  return "settings";
+/**
+ * Applies a module's persisted window configuration (layer, position,
+ * click-through, capacity) to its native window whenever it changes.
+ * No-op in the plain browser preview.
+ */
+export function useModuleWindow(moduleKey: ModuleKey) {
+  const win = useSettings((s) => s.settings[moduleKey].win);
+  const order = useSettings((s) => s.settings.moduleOrder);
+  const enabled = useSettings((s) => s.settings.modules[moduleKey]);
+  const displayVersion = useDisplaysVersion();
+
+  useEffect(() => {
+    if (!hasTauri() || !win) return;
+    const label = getWindowLabel();
+    // Per-display duplicates encode their own monitor in the window label.
+    const own = windowMonitor(label);
+    void invoke("window_apply", {
+      label,
+      level: win.level,
+      monitor: own
+        ? [own.x, own.y]
+        : win.monitor
+          ? [win.monitor.x, win.monitor.y]
+          : null,
+      x: own ? null : win.x,
+      y: own ? null : win.y,
+      clickThrough: win.clickThrough,
+      capacity:
+        win.capacity.width === 1 && win.capacity.height === 1
+          ? null
+          : [win.capacity.width, win.capacity.height],
+      order,
+    });
+    // Only the main window owns the set of duplicate windows; a duplicate
+    // must never try to recreate the whole family from inside itself.
+    if (!own && moduleKey !== "wallpaper") {
+      void invoke("module_sync_displays", {
+        module: moduleKey,
+        visible: enabled,
+        displays: (win.extraMonitors ?? []).map((m) => [m.x, m.y]),
+        mainMonitor: win.monitor ? [win.monitor.x, win.monitor.y] : null,
+        level: win.level,
+        clickThrough: win.clickThrough,
+        capacity: [win.capacity.width, win.capacity.height],
+      });
+    }
+    // JSON-serialize to avoid effect churn from fresh object identities.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [moduleKey, JSON.stringify(win), JSON.stringify(order), enabled, displayVersion]);
+
+  // `window_apply` only moves a window when manual X/Y are set, so switching
+  // the target display must explicitly re-run the native placement for the
+  // already-visible module.
+  const monitorKey = win.monitor ? `${win.monitor.x},${win.monitor.y}` : "primary";
+  useEffect(() => {
+    if (!hasTauri() || !enabled) return;
+    // Notch and statusbar rebuild their own geometry from their layout
+    // commands on a display change; moving them generically here would race
+    // (and overwrite) that exact layout.
+    if (moduleKey !== "clock" && moduleKey !== "todo") return;
+    if (windowMonitor(getWindowLabel())) return; // duplicates follow their label
+    void invoke("set_module_visible", {
+      label: moduleKey,
+      visible: true,
+      x: win.x,
+      y: win.y,
+      monitor: win.monitor ? [win.monitor.x, win.monitor.y] : null,
+    });
+    // Only a display change (or re-enabling the module) should re-place it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [monitorKey, enabled, moduleKey]);
+}
+
+/** Debug handle: inspect the live settings from any page. */
+if (typeof window !== "undefined") {
+  (window as unknown as { __auraSettings: unknown }).__auraSettings = useSettings;
 }

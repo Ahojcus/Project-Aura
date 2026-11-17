@@ -1,114 +1,226 @@
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useSettings, useModuleWindow, hasTauri } from "../../store/settings";
+import {
+  getWallpaperLook,
+  useModuleWindow,
+  useSettings,
+  type WallpaperLook,
+} from "../../store/settings";
+import {
+  getWindowLabel,
+  hasTauri,
+  invoke,
+  windowMonitor,
+  type MediaInfo,
+  type MonitorInfo,
+} from "../../lib/bridge";
+import { useDisplaysVersion } from "../../lib/runtime";
 
-/** Display info mirrored from the Rust `get_monitors` command. */
-interface Mon {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-  scale: number;
-  primary: boolean;
+function clamp(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
+}
+
+/** Build the CSS filter for one wallpaper's saved color adjustments. */
+function wallpaperFilter(look: WallpaperLook) {
+  const parts: string[] = [];
+  const gamma = clamp(look.gamma, 0.4, 2.5);
+  const saturation = clamp(look.saturation / 100, 0, 2);
+  const hue = clamp(look.hue, -180, 180);
+
+  if (Math.abs(gamma - 1) > 0.001) parts.push("url(#wallpaper-gamma)");
+  if (Math.abs(saturation - 1) > 0.001) parts.push(`saturate(${saturation})`);
+  if (Math.abs(hue) > 0.001) parts.push(`hue-rotate(${hue}deg)`);
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function WallpaperGammaFilter({ gamma }: { gamma: number }) {
+  const exponent = clamp(gamma, 0.4, 2.5);
+  return (
+    <svg className="wallpaper-filter-defs" width="0" height="0" aria-hidden="true">
+      <defs>
+        <filter
+          id="wallpaper-gamma"
+          colorInterpolationFilters="sRGB"
+          x="-10%"
+          y="-10%"
+          width="120%"
+          height="120%"
+        >
+          <feComponentTransfer>
+            <feFuncR type="gamma" exponent={exponent} />
+            <feFuncG type="gamma" exponent={exponent} />
+            <feFuncB type="gamma" exponent={exponent} />
+          </feComponentTransfer>
+        </filter>
+      </defs>
+    </svg>
+  );
 }
 
 export function WallpaperLayer() {
   const wallpaper = useSettings((s) => s.settings.wallpaper);
-  const wallpaperModuleOn = useSettings((s) => s.settings.modules.wallpaper);
+  const moduleOn = useSettings((s) => s.settings.modules.wallpaper);
+  const displayVersion = useDisplaysVersion();
   const videoRef = useRef<HTMLVideoElement | null>(null);
 
-  /** This webview's display key ("<x>,<y>") when it is a per-display extra. */
-  const [extraKey, setExtraKey] = useState<string | null>(null);
-  /** Main window when true — it owns the sync of per-display extras. */
-  const [isMain, setIsMain] = useState(true);
-  /** This window's display key — for extras from the label, for the main
-   *  window from its configured display (primary when unset). */
-  const [selfKey, setSelfKey] = useState<string | null>(null);
+  /** Lively-style pause: set by the backend pause watcher. */
+  const [paused, setPaused] = useState(false);
+  const pausedRef = useRef(false);
+  /** Another player (SMTC) is actually playing → duck the wallpaper audio. */
+  const [mediaPlaying, setMediaPlaying] = useState(false);
+  /** A hidden WebView2 window must not start a video: doing so can stall the
+   *  native window thread before the wallpaper is even shown. */
+  const [windowVisible, setWindowVisible] = useState(() => !document.hidden);
 
-  // Identify which display THIS window covers (alias: dynamic import keeps the
-  // plain-browser preview working).
   useEffect(() => {
-    if (!hasTauri()) return;
-    void import("@tauri-apps/api/webviewWindow")
-      .then(({ getCurrentWebviewWindow }) => {
-        const label = getCurrentWebviewWindow().label;
-        if (label.startsWith("wallpaper_")) {
-          // "wallpaper_<x>_<y>" — global origin of the display this extra fills.
-          const parts = label.slice("wallpaper_".length).split("_");
-          const x = Number(parts[0]);
-          const y = Number(parts[1]);
-          if (Number.isFinite(x) && Number.isFinite(y) && parts.length === 2) {
-            setExtraKey(`${x},${y}`);
-            setIsMain(false);
-            setSelfKey(`${x},${y}`);
-            return;
-          }
-        }
-        setIsMain(true);
-      })
-      .catch(() => {});
+    const update = () => setWindowVisible(!document.hidden);
+    document.addEventListener("visibilitychange", update);
+    update();
+    return () => document.removeEventListener("visibilitychange", update);
   }, []);
 
-  // Main window: resolve its own display key (explicit monitor or primary).
+  // The window label is available synchronously. Resolving it from an async
+  // import made an extra briefly run the main window's sync/embed effects.
+  const encodedMonitor = windowMonitor(getWindowLabel());
+  const extraKey = encodedMonitor ? `${encodedMonitor.x},${encodedMonitor.y}` : null;
+  const isMain = encodedMonitor == null;
+  const [selfKey, setSelfKey] = useState<string | null>(null);
+
+  // Main window resolves its own display key (explicit monitor or primary).
   useEffect(() => {
     if (!hasTauri() || !isMain) return;
-    const conf = wallpaper.win.monitor as { x: number; y: number } | null;
+    const conf = wallpaper.win.monitor;
     if (conf) {
       setSelfKey(`${conf.x},${conf.y}`);
       return;
     }
-    void invoke<Mon[]>("get_monitors")
-      .then((list) => {
-        const p = list.find((m) => m.primary) ?? list[0];
-        setSelfKey(p ? `${p.x},${p.y}` : null);
-      })
-      .catch(() => {});
+    void invoke<MonitorInfo[]>("get_monitors").then((list) => {
+      const p = list?.find((m) => m.primary) ?? list?.[0];
+      setSelfKey(p ? `${p.x},${p.y}` : null);
+    });
   }, [isMain, wallpaper.win.monitor]);
 
-  // Main window: keep the per-display wallpaper windows in sync — create or
-  // show them for every display, hide torn-down extras (the module switch is
-  // the master visibility gate, same as the main wallpaper window).
+  // Main window keeps one wallpaper window per remaining display in sync.
   const displaysKey = JSON.stringify(wallpaper.displays ?? {});
   useEffect(() => {
     if (!hasTauri() || !isMain) return;
     void invoke("wallpaper_sync_displays", {
-      visible: wallpaperModuleOn,
-      mainMonitor: wallpaper.win.monitor ?? null,
-    }).catch(() => {});
-  }, [isMain, wallpaperModuleOn, displaysKey, wallpaper.win.monitor]);
+      visible: moduleOn,
+      mainMonitor: wallpaper.win.monitor
+        ? [wallpaper.win.monitor.x, wallpaper.win.monitor.y]
+        : null,
+    });
+  }, [
+    isMain,
+    moduleOn,
+    displaysKey,
+    wallpaper.win.monitor?.x,
+    wallpaper.win.monitor?.y,
+    displayVersion,
+  ]);
 
-  // Layer level (bottommost = embedded behind desktop icons, normal, topmost)
-  // and click-through. Extras run this too, but the command is addressed by the
-  // fixed "wallpaper" label, so only the main window is actually updated —
-  // per-display extras are configured by Rust at creation.
+  // Moving the main wallpaper to another display must resize and re-embed it
+  // immediately; the backend only does that inside set_module_visible.
+  useEffect(() => {
+    if (!hasTauri() || !isMain || !moduleOn) return;
+    void invoke("set_module_visible", {
+      label: "wallpaper",
+      visible: true,
+      monitor: wallpaper.win.monitor ? [wallpaper.win.monitor.x, wallpaper.win.monitor.y] : null,
+    });
+  }, [isMain, moduleOn, wallpaper.win.monitor?.x, wallpaper.win.monitor?.y, displayVersion]);
+
+  // A duplicate display must show itself after its own page has mounted. The
+  // main page embeds duplicates through wallpaper_sync_displays, but that can
+  // run before this page has painted and leave its WebView black.
+  useEffect(() => {
+    if (!hasTauri() || isMain || !moduleOn) return;
+    void invoke("set_module_visible", {
+      label: getWindowLabel(),
+      visible: true,
+      monitor: encodedMonitor ? [encodedMonitor.x, encodedMonitor.y] : null,
+    });
+  }, [isMain, moduleOn, encodedMonitor?.x, encodedMonitor?.y, displayVersion]);
+
   useModuleWindow("wallpaper");
 
-  /** The wallpaper assigned to THIS display: a per-display override if there
-   *  is one, otherwise the main wallpaper. */
+  // Forward the pause policy to the backend watcher.
+  useEffect(() => {
+    void invoke("wallpaper_set_pause_mode", {
+      mode: { off: 0, maximized: 1, fullscreen: 2 }[wallpaper.pauseWhen] ?? 0,
+    });
+  }, [wallpaper.pauseWhen]);
+
+  // Lively-style battery policy: stop animating while on battery power.
+  useEffect(() => {
+    void invoke("wallpaper_set_battery_pause", { enabled: wallpaper.pauseOnBattery });
+  }, [wallpaper.pauseOnBattery]);
+
+  // Subscribe to pause transitions.
+  useEffect(() => {
+    if (!hasTauri()) return;
+    let unlisten: (() => void) | null = null;
+    let cancelled = false;
+    void import("@tauri-apps/api/event")
+      .then(({ listen }) =>
+        listen<{ paused: boolean }>("aura:wallpaper-pause", (e) => {
+          const p = Boolean(e.payload?.paused);
+          pausedRef.current = p;
+          setPaused(p);
+        }),
+      )
+      .then((un) => {
+        // Avoid leaking a listener if the layer unmounts during startup.
+        if (cancelled) {
+          un?.();
+          return;
+        }
+        unlisten = un ?? null;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  // Watch whether another media session is playing (audio duck).
+  useEffect(() => {
+    if (!hasTauri()) return;
+    let alive = true;
+    const tick = () =>
+      void invoke<MediaInfo>("get_media_info").then((info) => {
+        if (alive) setMediaPlaying((info?.status ?? "").toUpperCase() === "playing");
+      });
+    tick();
+    const timer = window.setInterval(tick, 2000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const effectiveMuted = wallpaper.muted || (wallpaper.muteWithMedia && mediaPlaying);
   const ownKey = extraKey ?? selfKey;
   const per = ownKey ? wallpaper.displays?.[ownKey] : undefined;
   const path = per ? per.path : wallpaper.path;
   const kind = per ? per.kind : wallpaper.kind;
-  const src = useMemo(
-    () => (path ? convertFileSrc(path) : ""),
-    [path],
-  );
+  const look = getWallpaperLook(wallpaper.looks, path);
+  const filter = wallpaperFilter(look);
+  const src = useMemo(() => (path ? convertFileSrc(path) : ""), [path]);
 
   useEffect(() => {
     const v = videoRef.current;
-    if (v) {
-      v.volume = Math.min(1, Math.max(0, wallpaper.volume));
-      v.muted = wallpaper.muted;
-      v.playbackRate = Math.min(4, Math.max(0.1, wallpaper.playbackRate));
-    }
-  }, [wallpaper.volume, wallpaper.muted, wallpaper.playbackRate, src]);
+    if (!v) return;
+    v.volume = Math.min(1, Math.max(0, wallpaper.volume));
+    v.muted = effectiveMuted;
+    v.loop = wallpaper.loop;
+    v.playbackRate = Math.min(4, Math.max(0.1, wallpaper.playbackRate * look.speed));
+  }, [wallpaper.volume, effectiveMuted, wallpaper.loop, wallpaper.playbackRate, look.speed, src]);
 
-  // Kick the video whenever its source or relevant settings change. An
-  // `autoPlay` attribute alone is unreliable: the embedded window can free its
-  // play() promise (WebView2 blocked autoplay while audible, or Chromium
-  // paused/never started it), which left the wallpaper frozen on the first
-  // frame. Play imperatively; if an audible start is refused, retry muted so
-  // the wallpaper still animates.
+  // Kick playback imperatively: autoplay is unreliable in an embedded webview,
+  // and an audible start may be refused — retry muted so the wallpaper still
+  // animates instead of freezing on its first frame.
   useEffect(() => {
     const v = videoRef.current;
     if (!v) return;
@@ -117,21 +229,22 @@ export function WallpaperLayer() {
     const kick = () => {
       if (cancelled) return;
       v.play().catch(() => {
-        // Autoplay with sound refused → animate silently instead of freezing.
         v.muted = true;
-        v.play().catch(() => { /* give up until the next kick */ });
+        v.play().catch(() => {});
       });
     };
-
     const onLoaded = () => kick();
-    const onStalled = () => { if (v.paused) kick(); };
-    const onVisibility = () => { if (!document.hidden) kick(); };
+    const onStalled = () => {
+      if (!pausedRef.current && v.paused) kick();
+    };
+    const onVisibility = () => {
+      if (!document.hidden && !pausedRef.current) kick();
+    };
 
     v.addEventListener("loadeddata", onLoaded);
     v.addEventListener("stalled", onStalled);
     v.addEventListener("pause", onStalled);
     document.addEventListener("visibilitychange", onVisibility);
-    // The element may already be ready when this effect runs (hot reload etc.).
     void (v.readyState >= 2 ? kick() : v.load());
 
     return () => {
@@ -143,40 +256,75 @@ export function WallpaperLayer() {
     };
   }, [src]);
 
-  if (kind === "none" || !path || !src) {
-    return null;
-  }
+  // Pause / resume with the watcher state.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (paused) v.pause();
+    else v.play().catch(() => {});
+  }, [paused, src]);
+
+  // Resume watchdog: a WebView2 video can pause itself (occlusion, GPU reset,
+  // media teardown). Re-kick it unless the pause policy or a non-looping end
+  // asked for the stop.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const id = window.setInterval(() => {
+      if (!pausedRef.current && v.paused && !v.ended) v.play().catch(() => {});
+    }, 5000);
+    return () => window.clearInterval(id);
+  }, [src]);
+
+  if (!windowVisible || kind === "none" || !path) return null;
 
   const transform = `scale(${wallpaper.scale}) translate(${wallpaper.offsetX}%, ${wallpaper.offsetY}%)`;
+
+  if (kind === "web") {
+    return (
+      <div className="wallpaper-layer">
+        <WallpaperGammaFilter gamma={look.gamma} />
+        <iframe
+          className="wallpaper-media"
+          src={path}
+          title="Web wallpaper"
+          allow="autoplay"
+          sandbox="allow-scripts allow-presentation allow-pointer-lock"
+          referrerPolicy="no-referrer"
+          style={{ filter }}
+        />
+      </div>
+    );
+  }
 
   if (kind === "video") {
     return (
       <div className="wallpaper-layer">
+        <WallpaperGammaFilter gamma={look.gamma} />
         <video
           ref={videoRef}
           className="wallpaper-media"
           src={src}
-          style={{ transform, objectFit: wallpaper.fit === "fill" ? "fill" : wallpaper.fit }}
+          style={{ transform, objectFit: wallpaper.fit, filter }}
           autoPlay
-          loop
+          loop={wallpaper.loop}
           playsInline
           disablePictureInPicture
         />
-        {wallpaper.dimmer > 0 && <div className="wallpaper-dim" style={{ opacity: wallpaper.dimmer / 100 }} />}
       </div>
     );
   }
 
   return (
     <div className="wallpaper-layer">
+      <WallpaperGammaFilter gamma={look.gamma} />
       <img
         key={src}
         className="wallpaper-media"
         src={src}
         alt=""
-        style={{ transform, objectFit: wallpaper.fit === "fill" ? "fill" : wallpaper.fit }}
+        style={{ transform, objectFit: wallpaper.fit, filter }}
       />
-      {wallpaper.dimmer > 0 && <div className="wallpaper-dim" style={{ opacity: wallpaper.dimmer / 100 }} />}
     </div>
   );
 }

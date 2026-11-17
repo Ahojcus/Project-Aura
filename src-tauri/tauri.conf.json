@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Aura",
-  "version": "0.5.0-pre",
-  "identifier": "com.freebuff.aura",
+  "version": "0.6.0",
+  "identifier": "com.freebuff.aura.functional",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:5173",
@@ -20,13 +20,13 @@
         "label": "settings",
         "title": "Aura Settings",
         "url": "index.html",
-        "width": 1000,
-        "height": 680,
-        "minWidth": 820,
-        "minHeight": 560,
+        "width": 900,
+        "height": 640,
+        "minWidth": 720,
+        "minHeight": 480,
         "center": true,
         "resizable": true,
-        "visible": true,
+        "visible": false,
         "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       },
       {
@@ -69,8 +69,8 @@
         "shadow": false,
         "focus": false,
         "alwaysOnTop": true,
-        "width": 468,
-        "height": 338,
+        "width": 360,
+        "height": 220,
         "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       },
       {
@@ -84,13 +84,13 @@
         "shadow": false,
         "focus": false,
         "alwaysOnTop": true,
-        "width": 508,
-        "height": 648,
+        "width": 420,
+        "height": 560,
         "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       },
       {
-        "label": "start",
-        "url": "start.html",
+        "label": "statusbar",
+        "url": "statusbar.html",
         "visible": false,
         "decorations": false,
         "transparent": true,
@@ -99,8 +99,23 @@
         "shadow": false,
         "focus": false,
         "alwaysOnTop": true,
-        "width": 688,
-        "height": 588,
+        "width": 1280,
+        "height": 40,
+        "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
+      },
+      {
+        "label": "edgelight",
+        "url": "edgelight.html",
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "shadow": false,
+        "focus": false,
+        "alwaysOnTop": true,
+        "width": 1920,
+        "height": 1080,
         "additionalBrowserArgs": "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows"
       }
     ]
@@ -109,7 +124,7 @@
     "active": true,
     "targets": "all",
     "category": "Utility",
-    "shortDescription": "Lightweight modular desktop overlay: wallpaper engine, clock, to-do and a smart notch.",
+    "shortDescription": "Functionality-only modular desktop overlay.",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
   }
 }
