@@ -242,6 +242,12 @@ pub fn set_module_visible(
         // Re-reveal must not reshuffle the stack: re-apply the module's
         // remembered level, then restack its whole band so the sidebar
         // priority (not activation recency) decides who is on top.
+        #[cfg(windows)]
+        if base_label(&label) == "notch" {
+            if let Some(hwnd) = hwnd_of(&window) {
+                raise_above_top_toolbar(hwnd.0 as isize);
+            }
+        }
         let lv = levels().lock().unwrap().get(&label).cloned();
         if let Some(l) = lv {
             apply_level(&app, &window, &l);
@@ -406,10 +412,18 @@ pub fn window_apply(
         if let Some(mon) = target_monitor.as_ref() {
             // Manual coordinates are logical px within the chosen display.
             let scale = mon.scale_factor();
-            let _ = w.set_position(tauri::PhysicalPosition::new(
-                mon.position().x + (x * scale).round() as i32,
-                mon.position().y + (y * scale).round() as i32,
-            ));
+            let px = mon.position().x + (x * scale).round() as i32;
+            let py = mon.position().y + (y * scale).round() as i32;
+            let _ = w.set_position(tauri::PhysicalPosition::new(px, py));
+            #[cfg(windows)]
+            if base_label(&label) == "notch" {
+                if let Ok(mut geom) = notch_geometry().lock() {
+                    if let Some(slot) = geom.get_mut(&label) {
+                        slot.0 = px;
+                        slot.1 = py;
+                    }
+                }
+            }
         }
     } else if let Some(mon) = target_monitor.as_ref() {
         // A saved monitor with no manual X/Y still has to be restored. The
@@ -745,6 +759,135 @@ fn band_restack(_app: &AppHandle, _level: &str, _order: &[String]) {}
 /// the Store "Smart Notch"): notch-or-bar shape, placement along screen
 /// edges/corners, and independent length & thickness. `length` means px in
 /// "notch" mode and a percentage of screen width in "bar" mode.
+/// Put the Smart Notch directly above Seelen UI's top toolbar.
+///
+/// Both windows live in the same topmost band, and the full-width "Fancy
+/// Toolbar" covers the notch's top pixels — which reads as the pill dropping
+/// off the screen edge. Raising the notch above that one window keeps both
+/// tools enabled while the pill stays attached to the top of the display.
+/// Where the notch last put itself (outer rect, physical px) per window label.
+///
+/// Seelen UI's top toolbar is an AppBar and its placement passes push windows
+/// that sit on that edge down by the toolbar height. The notch is drawn over the
+/// strip on purpose, so Aura remembers its own geometry and re-asserts it.
+#[cfg(windows)]
+fn notch_geometry() -> &'static std::sync::Mutex<std::collections::HashMap<String, (i32, i32, i32, i32)>>
+{
+    static GEOM: std::sync::OnceLock<
+        std::sync::Mutex<std::collections::HashMap<String, (i32, i32, i32, i32)>>,
+    > = std::sync::OnceLock::new();
+    GEOM.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// True when `hwnd` sits above `toolbar` in the z-order.
+#[cfg(windows)]
+fn is_above(hwnd: windows::Win32::Foundation::HWND, toolbar: windows::Win32::Foundation::HWND) -> bool {
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindow, GW_HWNDPREV};
+    let mut cursor = unsafe { GetWindow(toolbar, GW_HWNDPREV) }.unwrap_or_default();
+    for _ in 0..48 {
+        if cursor.0.is_null() {
+            return false;
+        }
+        if cursor == hwnd {
+            return true;
+        }
+        cursor = unsafe { GetWindow(cursor, GW_HWNDPREV) }.unwrap_or_default();
+    }
+    false
+}
+
+/// Put every visible Smart Notch back where it belongs: on its own screen edge
+/// (Seelen UI's toolbar placement drags border windows down by its height) and
+/// above that toolbar, so the pill still reads as one piece with the screen top.
+#[cfg(windows)]
+pub fn enforce_notch_geometry(app: &AppHandle) {
+    use windows::core::w;
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, GetWindowRect, IsWindowVisible, SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE,
+    };
+    static DRIFT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u8>>> =
+        std::sync::OnceLock::new();
+    let drift = DRIFT.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+    let wanted = notch_geometry()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    let toolbar = (unsafe { FindWindowW(w!("Tauri Window"), w!("Fancy Toolbar")) })
+        .ok()
+        .filter(|h| !h.0.is_null());
+
+    for (label, window) in app.webview_windows() {
+        if base_label(&label) != "notch" {
+            continue;
+        }
+        let Some((x, y, cw, ch)) = wanted.get(&label).copied() else { continue };
+        let Some(hwnd) = hwnd_of(&window) else { continue };
+        if !unsafe { IsWindowVisible(hwnd) }.as_bool() {
+            continue;
+        }
+        let mut rect = RECT::default();
+        if unsafe { GetWindowRect(hwnd, &mut rect) }.is_err() {
+            continue;
+        }
+        let moved = (rect.left - x).abs() > 2 || (rect.top - y).abs() > 2;
+        let buried = toolbar.map(|t| !is_above(hwnd, t)).unwrap_or(false);
+        if !moved && !buried {
+            if let Ok(mut d) = drift.lock() {
+                d.insert(label.clone(), 0);
+            }
+            continue;
+        }
+        // Being covered by the toolbar is fixed on the spot: the pill must not
+        // sit behind it even for a moment. A moved window needs two samples,
+        // because a single nudge can be a transient of a shell placement pass.
+        let count = {
+            let Ok(mut d) = drift.lock() else { continue };
+            let c = d.entry(label.clone()).or_insert(0);
+            *c = c.saturating_add(1);
+            *c
+        };
+        if moved && !buried && count < 2 {
+            continue;
+        }
+        let _ = unsafe { SetWindowPos(hwnd, HWND_TOPMOST, x, y, cw, ch, SWP_NOACTIVATE) };
+    }
+}
+
+#[cfg(windows)]
+fn raise_above_top_toolbar(hwnd_isize: isize) {
+    use windows::core::w;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        FindWindowW, GetWindowLongPtrW, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST, SWP_NOACTIVATE,
+        SWP_NOMOVE, SWP_NOSIZE, WS_EX_TOPMOST,
+    };
+    let hwnd = HWND(hwnd_isize as *mut core::ffi::c_void);
+    // Only reorder inside the topmost band; a "normal" notch must stay normal.
+    let ex = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) } as u32;
+    if ex & WS_EX_TOPMOST.0 == 0 {
+        return;
+    }
+    let Ok(toolbar) = (unsafe { FindWindowW(w!("Tauri Window"), w!("Fancy Toolbar")) }) else {
+        return;
+    };
+    if toolbar.0.is_null() || toolbar == hwnd {
+        return;
+    }
+    // HWND_TOPMOST puts us at the top of the topmost band, above the toolbar.
+    let _ = unsafe {
+        SetWindowPos(
+            hwnd,
+            HWND_TOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE,
+        )
+    };
+}
+
 #[tauri::command]
 pub fn notch_apply_layout(
     app: AppHandle,
@@ -813,10 +956,12 @@ pub fn notch_apply_layout(
 
     // Anchor edges/corners keep a small breathing 8px margin from the edge.
     let margin = 8.0;
+    // The notch shape hangs from the top edge with no gap, like NotchPixel's
+    // notch; bottom placements keep their 8px breathing room.
     let (anchor_x, anchor_y, anchor_side) = match placement.as_str() {
-        "top-left" => (margin, margin, "left"),
-        "top-right" => (sw - margin, margin, "right"),
-        "top-center" => (sw / 2.0, margin, "center"),
+        "top-left" => (margin, 0.0, "left"),
+        "top-right" => (sw - margin, 0.0, "right"),
+        "top-center" => (sw / 2.0, 0.0, "center"),
         "bottom-left" => (margin, sh - margin, "left"),
         "bottom-right" => (sw - margin, sh - margin, "right"),
         _ => (sw / 2.0, sh - margin, "center"),
@@ -836,10 +981,26 @@ pub fn notch_apply_layout(
     };
 
     let _ = w.set_size(tauri::LogicalSize::new(width, height));
-    let _ = w.set_position(tauri::PhysicalPosition::new(
-        monitor.position().x + (x * scale).round() as i32,
-        monitor.position().y + (y * scale).round() as i32,
-    ));
+    let px = monitor.position().x + (x * scale).round() as i32;
+    let py = monitor.position().y + (y * scale).round() as i32;
+    let _ = w.set_position(tauri::PhysicalPosition::new(px, py));
+    #[cfg(windows)]
+    {
+        if let Some(hwnd) = hwnd_of(&w) {
+            raise_above_top_toolbar(hwnd.0 as isize);
+        }
+        // Remember what the layout asked for: the shell's own placement passes
+        // like to nudge edge windows down by the height of its toolbar.
+        if let Ok(mut geom) = notch_geometry().lock() {
+            let slot = geom.entry(label.clone()).or_insert((px, py, 0, 0));
+            *slot = (
+                px,
+                py,
+                (width * scale).round() as i32,
+                (height * scale).round() as i32,
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -870,39 +1031,49 @@ pub fn statusbar_apply_layout(
     // Edge-to-edge by default; the inset sidebar look keeps the bar usable.
     let inset = inset.clamp(0.0, ((sw - 240.0) / 2.0).max(0.0));
     let width = (sw - 2.0 * inset).max(240.0);
-    let hwnd = hwnd_of(&w).map(|h| h.0 as isize);
 
-    // Register the bar as an AppBar so Explorer shrinks the desktop work area
-    // instead of letting maximized windows cover it. Fullscreen-hidden and
-    // disabled bars release the edge so games/apps can use the whole display.
-    let reserved = if reserve_edge.unwrap_or(false) {
-        hwnd.and_then(|h| {
-            crate::appbar::reserve(
-                h,
-                &placement,
-                monitor.position().x,
-                monitor.position().y,
-                monitor.size().width as i32,
-                monitor.size().height as i32,
-                (thickness * scale).round() as i32,
-            )
-        })
-    } else {
-        if let Some(h) = hwnd {
-            crate::appbar::release(h);
-        }
-        None
-    };
+    // Reserve the edge as an AppBar so Explorer shrinks the desktop work area
+    // instead of letting maximized windows cover the bar. Fullscreen-hidden and
+    // disabled bars release it so games and apps get the whole display.
+    //
+    // The reservation is owned by a hidden carrier window rather than by the
+    // bar: Explorer runs its own placement pass over registered AppBars and, for
+    // a bottom bar, drops the window one bar-height inside the edge — which is
+    // what made the bar hop up and fall back. The carrier is created on the main
+    // thread so it lives as long as the app.
+    {
+        let app = app.clone();
+        let placement = placement.clone();
+        let want = reserve_edge.unwrap_or(false);
+        let (mx, my) = (monitor.position().x, monitor.position().y);
+        let (mw, mh) = (
+            monitor.size().width as i32,
+            monitor.size().height as i32,
+        );
+        let thick_px = (thickness * scale).round() as i32;
+        let key = hwnd_of(&w).map(|h| h.0 as isize).unwrap_or(0);
+        let _ = app.run_on_main_thread(move || {
+            let carrier = crate::appbar::carrier(key);
+            if carrier == 0 {
+                return;
+            }
+            if want {
+                let _ = crate::appbar::reserve(carrier, &placement, mx, my, mw, mh, thick_px);
+            } else {
+                crate::appbar::release(carrier);
+            }
+        });
+    }
 
-    let (y, height) = if let Some((_left, top, _right, bottom)) = reserved {
-        (
-            ((top - monitor.position().y) as f64 / scale).max(0.0),
-            ((bottom - top) as f64 / scale).max(1.0),
-        )
-    } else if placement == "bottom" {
-        ((sh - thickness).max(0.0), thickness)
+    // The bar is always drawn flush on its configured edge. The AppBar reply
+    // only describes the reserved work area; using it for the window geometry
+    // made the bar hop one bar-height up (and back down) whenever the strip was
+    // released and re-reserved — fullscreen, cloak or a display change.
+    let height = thickness;
+    let y = if placement == "bottom" {
+        (sh - height).max(0.0)
     } else {
-        (0.0, thickness)
+        0.0
     };
 
     let _ = w.set_size(tauri::LogicalSize::new(width.round(), height.round()));
@@ -1452,6 +1623,12 @@ pub fn toggle_media_playback() -> bool {
     crate::media::toggle_playback()
 }
 
+/// Skip to the next ("next") or previous ("previous") track.
+#[tauri::command]
+pub fn media_skip(direction: String) -> bool {
+    crate::media::skip(&direction)
+}
+
 #[tauri::command]
 pub fn get_system_info(state: State<'_, SysState>) -> Option<crate::monit::SystemSnapshot> {
     state.snapshot.lock().ok()?.clone()
@@ -1673,3 +1850,30 @@ pub fn app_shortcut_set(app: AppHandle, enabled: bool, combo: Option<String>) ->
     Ok(())
 }
 
+
+// ---------------------------------------------------------------------------
+// Shared settings — one JSON file for every launch mode
+// ---------------------------------------------------------------------------
+
+/// Path of the settings file shared by the dev server and the packaged app.
+fn settings_file(app: &AppHandle) -> Result<std::path::PathBuf, String> {
+    let dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    Ok(dir.join("settings.json"))
+}
+
+/// Read the shared settings JSON (None on first run or unreadable file).
+#[tauri::command]
+pub fn settings_read(app: AppHandle) -> Option<String> {
+    std::fs::read_to_string(settings_file(&app).ok()?).ok()
+}
+
+/// Persist the settings JSON so the next launch — whatever entry point — reads
+/// the same theme, layout and module set.
+#[tauri::command]
+pub fn settings_write(app: AppHandle, json: String) -> Result<(), String> {
+    let path = settings_file(&app)?;
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    std::fs::write(&path, json).map_err(|e| e.to_string())
+}

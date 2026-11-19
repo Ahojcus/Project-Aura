@@ -679,6 +679,33 @@ function Slider({
   );
 }
 
+/** Per-module background transparency control. */
+function BackgroundGroup({
+  module,
+  value,
+  update,
+}: {
+  module: "clock" | "notch" | "todo" | "statusbar";
+  value: number;
+  update: Update;
+}) {
+  return (
+    <SettingsGroup
+      title="Background"
+      hint="How much of the desktop shows through this module's glass."
+    >
+      <Slider
+        label="Transparency"
+        value={value}
+        min={0}
+        max={100}
+        display={(v) => `${Math.round(v)}%`}
+        onChange={(v) => update({ [module]: { bgTransparency: v } })}
+      />
+    </SettingsGroup>
+  );
+}
+
 function PresetEditor({
   values,
   onChange,
@@ -1403,6 +1430,7 @@ function ClockSettings({
           <Toggle label="Show year" checked={clock.showYear} onChange={(v) => update({ clock: { showYear: v } })} />
         </div>
       </SettingsGroup>
+      <BackgroundGroup module="clock" value={clock.bgTransparency} update={update} />
       <WindowGroup moduleKey="clock" win={clock.win} setWin={setWin} monitors={monitors} showCapacity />
     </>
   );
@@ -1671,6 +1699,7 @@ function NotchSettings({
         </div>
       </SettingsGroup>
 
+      <BackgroundGroup module="notch" value={notch.bgTransparency} update={update} />
       <WindowGroup moduleKey="notch" win={notch.win} setWin={setWin} monitors={monitors} />
     </>
   );
@@ -1749,6 +1778,7 @@ function TodoSettings({
         </SettingRow>
       </SettingsGroup>
 
+      <BackgroundGroup module="todo" value={todo.bgTransparency} update={update} />
       <WindowGroup moduleKey="todo" win={todo.win} setWin={setWin} monitors={monitors} showCapacity />
     </>
   );
@@ -1865,6 +1895,7 @@ function StatusbarSettings({
         </SettingsGroup>
       )}
 
+      <BackgroundGroup module="statusbar" value={bar.bgTransparency} update={update} />
       <WindowGroup moduleKey="statusbar" win={bar.win} setWin={setWin} monitors={monitors} />
     </>
   );

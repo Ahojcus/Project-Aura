@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { isOverdue, useTodo, type Priority, type Task } from "../../store/todo";
-import { useModuleWindow, useSettings } from "../../store/settings";
+import { moduleBackground, useModuleWindow, useSettings } from "../../store/settings";
 import { dragHandle } from "../../lib/drag";
 import { useHitRegion } from "../../lib/hitRegion";
 
@@ -19,6 +19,18 @@ export function TodoModule() {
   const sortMode = useSettings((s) => s.settings.todo.sort);
   const defaultPriority = useSettings((s) => s.settings.todo.defaultPriority);
   const draggable = useSettings((s) => s.settings.todo.win.draggable);
+  const bgTransparency = useSettings((s) => s.settings.todo.bgTransparency);
+
+  // `user-select: none` stops a selection from starting on the card, but a drag
+  // that begins in the search field can still run into the list, and pressing
+  // plain text afterwards does not collapse that range. Clear it on press so a
+  // stray selection never stays stuck over the widget.
+  const clearSelection = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if ((event.target as HTMLElement).closest("input, textarea, select, [contenteditable='true']"))
+      return;
+    const selection = window.getSelection();
+    if (selection && !selection.isCollapsed) selection.removeAllRanges();
+  };
   useModuleWindow("todo");
   useHitRegion(".todo-root", 15, 6);
 
@@ -71,7 +83,12 @@ export function TodoModule() {
   };
 
   return (
-    <div className="todo-root">
+    <div
+      className="todo-root"
+      style={moduleBackground(bgTransparency)}
+      onPointerDown={clearSelection}
+      onPointerUp={clearSelection}
+    >
       <div
         className="todo-head"
         onPointerDown={draggable ? dragHandle : undefined}

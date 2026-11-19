@@ -4,7 +4,8 @@ use windows::core::{PCWSTR, w};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, RECT, WPARAM};
 use windows::Win32::Graphics::Gdi::ClientToScreen;
 use windows::Win32::UI::WindowsAndMessaging::{
-    FindWindowExW, FindWindowW, GetAncestor, GetClassNameW, GetWindowLongPtrW, GetWindowRect,
+    FindWindowExW, FindWindowW, GetAncestor, GetClassNameW, GetClientRect, GetWindowLongPtrW,
+    GetWindowRect,
     GetWindowThreadProcessId, IsWindowVisible, SetParent, SetWindowLongPtrW, SetWindowPos,
     ShowWindowAsync, EnumWindows, SendMessageTimeoutW, GWL_EXSTYLE, GWL_STYLE,
     GA_PARENT, HWND_BOTTOM, HWND_TOP, SMTO_NORMAL,
@@ -158,6 +159,7 @@ unsafe fn do_embed(hwnd: windows::Win32::Foundation::HWND) -> bool {
         let parent = GetAncestor(hwnd, GA_PARENT);
         if matches!(class_name(parent).as_deref(), Some("WorkerW") | Some("Progman")) {
             let ok = ensure_backdrop(hwnd);
+            let _ = fit_to_monitor(hwnd);
             if ok {
                 let _ = place_below_icons(hwnd);
             }
@@ -317,38 +319,98 @@ unsafe fn do_embed(hwnd: windows::Win32::Foundation::HWND) -> bool {
         SWP_FRAMECHANGED | SWP_NOACTIVATE,
     );
     let _ = place_below_icons(hwnd);
-    // The outer window may include a frame that the display geometry does not.
-    // Move the client's screen origin onto the display origin so the content
-    // cannot spill into the neighbouring monitor.
-    align_client_origin(hwnd, self_rect.left, self_rect.top);
+    // A Tauri window keeps a small non-client frame even without decorations,
+    // so the client area ends up inset from the display and the wallpaper is
+    // cropped at the right/bottom. Fit the client to the monitor now that the
+    // window is parented, which is what makes the backdrop fill the screen.
+    let _ = fit_to_monitor(hwnd);
     true
 }
 
-/// Align the window's *client* origin to a screen point. A Tauri window can
-/// carry a small non-client frame (8px here) even after decorations are
-/// disabled; using the outer rect for per-display placement made the primary
-/// wallpaper's client area start at x=8 and bleed onto the second monitor.
-unsafe fn align_client_origin(hwnd: HWND, desired_left: i32, desired_top: i32) {
-    let mut origin = POINT::default();
-    if !ClientToScreen(hwnd, &mut origin).as_bool() {
-        return;
-    }
-    let dx = desired_left - origin.x;
-    let dy = desired_top - origin.y;
-    if dx == 0 && dy == 0 {
-        return;
-    }
-    let mut rect = RECT::default();
-    if GetWindowRect(hwnd, &mut rect).is_ok() {
-        let _ = SetWindowPos(
+/// Size and position a wallpaper so its *client* area covers exactly the
+/// monitor it sits on. A windowed Tauri webview carries a non-client frame
+/// (8px sides, 1px top, 8px bottom here) even with decorations off, and a
+/// reparented child positions in parent-client pixels, so neither the frame
+/// nor the desktop host can be ignored: `set_size(monitor)` alone leaves the
+/// client 8px short on the right/bottom, which reads as a cropped wallpaper.
+pub fn fit_to_monitor(hwnd: HWND) -> bool {
+    unsafe {
+        use windows::Win32::Graphics::Gdi::{
+            GetMonitorInfoW, MonitorFromWindow, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+        };
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut info = MONITORINFO {
+            cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+            ..Default::default()
+        };
+        if !GetMonitorInfoW(monitor, &mut info).as_bool() {
+            return false;
+        }
+        let target = info.rcMonitor;
+        let mut window_rect = RECT::default();
+        let mut client_rect = RECT::default();
+        if GetWindowRect(hwnd, &mut window_rect).is_err()
+            || GetClientRect(hwnd, &mut client_rect).is_err()
+        {
+            return false;
+        }
+        let mut client_origin = POINT::default();
+        if !ClientToScreen(hwnd, &mut client_origin).as_bool() {
+            return false;
+        }
+        let frame_w =
+            (window_rect.right - window_rect.left) - (client_rect.right - client_rect.left);
+        let frame_h =
+            (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
+        let parent = GetAncestor(hwnd, GA_PARENT);
+        let mut parent_origin = POINT::default();
+        if !ClientToScreen(parent, &mut parent_origin).as_bool() {
+            return false;
+        }
+        // Offset between the window's outer corner and its client corner.
+        let nc_x = client_origin.x - window_rect.left;
+        let nc_y = client_origin.y - window_rect.top;
+        let x = target.left - parent_origin.x - nc_x;
+        let y = target.top - parent_origin.y - nc_y;
+        let w = (target.right - target.left) + frame_w.max(0);
+        let h = (target.bottom - target.top) + frame_h.max(0);
+        SetWindowPos(
             hwnd,
             HWND::default(),
-            rect.left + dx,
-            rect.top + dy,
-            0,
-            0,
-            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-        );
+            x,
+            y,
+            w,
+            h,
+            SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        )
+        .is_ok()
+    }
+}
+
+/// Fit a Tauri webview window's *client* area to the display it is on.
+pub fn fit_window(window: &tauri::WebviewWindow) -> bool {
+    #[cfg(windows)]
+    {
+        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+        use windows::Win32::Foundation::HWND;
+        let hwnd: Option<HWND> = (|| -> Option<HWND> {
+            let raw = window.window_handle().ok()?.window_handle().ok()?.as_raw();
+            match raw {
+                RawWindowHandle::Win32(h) => {
+                    Some(HWND(h.hwnd.get() as *mut core::ffi::c_void))
+                }
+                _ => None,
+            }
+        })();
+        if let Some(hwnd) = hwnd {
+            return fit_to_monitor(hwnd);
+        }
+        false
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = window;
+        false
     }
 }
 
@@ -422,6 +484,9 @@ pub fn ensure_backdrop(hwnd: windows::Win32::Foundation::HWND) -> bool {
 pub fn show_bottom_async(hwnd: isize) {
     let hwnd = windows::Win32::Foundation::HWND(hwnd as *mut core::ffi::c_void);
     unsafe {
+        // Every show re-fits the client to its display: monitor moves, DPI
+        // changes and Explorer restarts all go through this path.
+        let _ = fit_to_monitor(hwnd);
         let _ = ShowWindowAsync(hwnd, SW_SHOWNOACTIVATE);
         if class_name(GetAncestor(hwnd, GA_PARENT)).as_deref() == Some("Progman") {
             // Do not queue HWND_BOTTOM here: it would run after (and undo)

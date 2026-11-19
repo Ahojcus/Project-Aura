@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { useEffect } from "react";
+import { useEffect, type CSSProperties } from "react";
 import { getWindowLabel, hasTauri, invoke, windowMonitor } from "../lib/bridge";
 import { useDisplaysVersion } from "../lib/runtime";
 
@@ -132,6 +132,8 @@ export interface Settings {
     showDate: boolean;
     showSeconds: boolean;
     showYear: boolean;
+    /** Background transparency in percent (0 = solid, 100 = invisible). */
+    bgTransparency: number;
     win: WindowConf;
   };
   wallpaper: {
@@ -195,12 +197,16 @@ export interface Settings {
     hideOnFullscreen: boolean;
     /** Focus-timer preset buttons, in minutes. */
     timerPresets: number[];
+    /** Background transparency in percent (0 = solid, 100 = invisible). */
+    bgTransparency: number;
     win: WindowConf;
   };
   todo: {
     categories: string[];
     sort: "smart" | "created";
     defaultPriority: "low" | "medium" | "high";
+    /** Background transparency in percent (0 = solid, 100 = invisible). */
+    bgTransparency: number;
     win: WindowConf;
   };
   statusbar: {
@@ -229,6 +235,8 @@ export interface Settings {
     weatherUnit: "c" | "f";
     /** Hide the bar while a fullscreen app is in front. */
     hideOnFullscreen: boolean;
+    /** Background transparency in percent (0 = solid, 100 = invisible). */
+    bgTransparency: number;
     win: WindowConf;
   };
   hotkey: { enabled: boolean; combo: string };
@@ -248,6 +256,7 @@ export const DEFAULT_SETTINGS: Settings = {
     showDate: true,
     showSeconds: false,
     showYear: false,
+    bgTransparency: 22,
     win: windowConf("topmost"),
   },
   wallpaper: {
@@ -330,12 +339,14 @@ export const DEFAULT_SETTINGS: Settings = {
     openOnHover: true,
     hideOnFullscreen: true,
     timerPresets: [5, 15, 25, 50],
+    bgTransparency: 2,
     win: { ...windowConf("topmost"), draggable: false },
   },
   todo: {
     categories: ["Personal", "Work", "Shopping"],
     sort: "smart",
     defaultPriority: "medium",
+    bgTransparency: 22,
     win: windowConf("topmost"),
   },
   statusbar: {
@@ -363,6 +374,7 @@ export const DEFAULT_SETTINGS: Settings = {
     weatherLocation: "",
     weatherUnit: "c",
     hideOnFullscreen: true,
+    bgTransparency: 22,
     win: { ...windowConf("topmost"), draggable: false },
   },
 };
@@ -395,12 +407,50 @@ export function loadSettings(): Settings {
   return structuredClone(DEFAULT_SETTINGS);
 }
 
+/** True once this window has tried to load the shared settings file. */
+let sharedHydrated = false;
+
+/**
+ * The dev server (`http://localhost:5173`) and the packaged app
+ * (`http://tauri.localhost`) are different web origins, so each keeps its own
+ * localStorage. Writing the settings to one native JSON file as well makes
+ * every launch mode — `tauri dev`, the release build and the sign-in launch —
+ * render the same theme and layout.
+ */
+function persistShared(settings: Settings) {
+  void invoke("settings_write", { json: JSON.stringify(settings) });
+}
+
+/**
+ * Load the shared settings file, replacing this origin's localStorage copy.
+ * A window that boots before the file exists seeds it from its own settings so
+ * the first launch after an update decides the stored appearance.
+ */
+export async function hydrateSharedSettings() {
+  if (sharedHydrated) return;
+  sharedHydrated = true;
+  if (!hasTauri()) return;
+  const raw = await invoke<string>("settings_read");
+  if (!raw) {
+    persistShared(useSettings.getState().settings);
+    return;
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (!isPlainObject(parsed)) return;
+    useSettings.getState().applyRemote(deepMerge(structuredClone(DEFAULT_SETTINGS), parsed));
+  } catch {
+    /* ignore corrupt shared settings */
+  }
+}
+
 function persist(settings: Settings) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
   } catch {
     /* storage unavailable */
   }
+  persistShared(settings);
 }
 
 interface SettingsStore {
@@ -443,6 +493,31 @@ export const useSettings = create<SettingsStore>()((set, get) => {
     },
   };
 });
+
+/**
+ * CSS custom properties carrying one module's custom background transparency.
+ * `transparency` runs 0 (solid) … 100 (invisible); the glass tokens keep their
+ * existing soft/strong relationship. Modules painted from the solid "island"
+ * palette pass `island` and get the same treatment through `--island`.
+ */
+export function moduleBackground(transparency: number, island = false): CSSProperties {
+  const t = Math.min(100, Math.max(0, Number.isFinite(transparency) ? transparency : 0));
+  const solid = 100 - t;
+  // The "strong" stop sits 10 points above the soft one, but it has to reach
+  // zero too, or a fully transparent module keeps a faint gradient tint.
+  const strong = solid === 0 ? 0 : Math.min(100, solid + 10);
+  return {
+    // The notch paints from its solid island palette, everything else from the
+    // glass tokens; module chrome (fields, hairlines, shadow) follows these.
+    "--island-alpha": (solid / 100).toFixed(3),
+    "--module-solid": `${solid}%`,
+    "--module-glass": `${solid}%`,
+    "--module-glass-strong": `${strong}%`,
+    "--module-chrome-fade": `${t}%`,
+    // Unitless strength for backdrop-blur radii (calc() needs a number).
+    "--module-solid-ratio": (solid / 100).toFixed(3),
+  } as CSSProperties;
+}
 
 export function applyCssTokens(settings: Settings) {
   const root = document.documentElement;

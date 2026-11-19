@@ -213,15 +213,18 @@ fn extract_art(
     })
 }
 
-/// Toggle play/pause on the currently active media session.
-pub fn toggle_playback() -> bool {
+/// Runs `action` against the active media session, preferring the one that is
+/// currently playing. `None` when no session exists or the call fails.
+fn with_session<T>(
+    action: impl FnOnce(&GlobalSystemMediaTransportControlsSession) -> Result<T, Box<dyn std::error::Error>>,
+) -> Option<T> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
-    let run = || -> Result<bool, Box<dyn std::error::Error>> {
+    let run = || -> Result<T, Box<dyn std::error::Error>> {
         let mgr = GlobalSystemMediaTransportControlsSessionManager::RequestAsync()?.get()?;
-        let mut chosen: Option<GlobalSystemMediaTransportControlsSession> = None;
         let sessions = mgr.GetSessions()?;
+        let mut chosen: Option<GlobalSystemMediaTransportControlsSession> = None;
         for i in 0..sessions.Size()? as usize {
             let s = sessions.GetAt(i as u32)?;
             if is_session_self(&s) {
@@ -235,16 +238,36 @@ pub fn toggle_playback() -> bool {
                 chosen = Some(s);
             }
         }
-        let Some(session) = chosen else { return Ok(false) };
-        let status = status_of(&session);
-        if status == "playing" {
+        let session = chosen.ok_or("no media session")?;
+        action(&session)
+    };
+    run().ok()
+}
+
+/// Toggle play/pause on the currently active media session.
+pub fn toggle_playback() -> bool {
+    with_session(|session| {
+        if status_of(session) == "playing" {
             session.TryPauseAsync()?.get()?;
         } else {
             session.TryPlayAsync()?.get()?;
         }
-        Ok(true)
-    };
-    run().unwrap_or(false)
+        Ok(())
+    })
+    .is_some()
+}
+
+/// Skip to the next or previous track on the active media session.
+pub fn skip(direction: &str) -> bool {
+    with_session(|session| {
+        if direction == "previous" {
+            session.TrySkipPreviousAsync()?.get()?;
+        } else {
+            session.TrySkipNextAsync()?.get()?;
+        }
+        Ok(())
+    })
+    .is_some()
 }
 
 /// Current wall clock as 100ns ticks since 1601-01-01 — the same basis as

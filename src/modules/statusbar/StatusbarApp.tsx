@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from "react";
-import { useModuleWindow, useSettings } from "../../store/settings";
+import { moduleBackground, useModuleWindow, useSettings } from "../../store/settings";
 import {
   formatRate,
   getWindowLabel,
@@ -332,6 +332,11 @@ export function StatusbarApp() {
   // position is re-applied after the bar lays itself out. The display version
   // re-runs this after a monitor hotplug.
   const manualPos = winConf.x != null && winConf.y != null && !ownMonitor;
+  /* The native window is revealed before this page measures itself, so paint
+   * nothing until the bar has been placed on its configured edge. Painting
+   * first showed the bar at the window's default spot and then dropped it into
+   * place, which read as the bar jumping up and back down at boot. */
+  const [placed, setPlaced] = useState(false);
   useEffect(() => {
     let cancelled = false;
     void invoke("statusbar_apply_layout", {
@@ -346,13 +351,18 @@ export function StatusbarApp() {
           ? [winConf.monitor.x, winConf.monitor.y]
           : null,
     }).then(() => {
-      if (cancelled || !manualPos) return;
+      if (cancelled) return;
+      setPlaced(true);
+      if (!manualPos) return;
       void invoke("window_apply", {
         label: windowLabel,
         x: winConf.x,
         y: winConf.y,
         monitor: winConf.monitor ? [winConf.monitor.x, winConf.monitor.y] : null,
       });
+    }).catch(() => {
+      // Never leave the bar invisible because a placement call failed.
+      if (!cancelled) setPlaced(true);
     });
     return () => {
       cancelled = true;
@@ -408,10 +418,17 @@ export function StatusbarApp() {
       .catch(() => {});
   }, [hidden, winConf.clickThrough]);
 
+  if (!placed) return null;
+
   return (
     <div
       className={`sb-root ${bar.placement}${hidden ? " module-hidden" : ""}`}
-      style={{ "--sb-thick": `${bar.thickness}px` } as CSSProperties}
+      style={
+        {
+          "--sb-thick": `${bar.thickness}px`,
+          ...moduleBackground(bar.bgTransparency),
+        } as CSSProperties
+      }
     >
       <div className="sb-bar" onPointerDown={clearBarSelection} onPointerUp={clearBarSelection}>
         <span

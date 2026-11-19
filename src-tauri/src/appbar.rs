@@ -70,6 +70,107 @@ fn registered() -> &'static Mutex<HashMap<isize, Reservation>> {
     REGISTERED.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
+/// Hidden window that owns the AppBar reservation.
+///
+/// The shell runs its own placement pass over registered AppBars and, for a
+/// bottom bar, drops the window a bar-height inside the edge. Pointing that at
+/// the visible bar made it hop up and fall back, so the reservation lives on an
+/// invisible carrier instead: Explorer still shrinks the work area for the
+/// strip, but it can only ever move the carrier.
+///
+/// Must be called on a thread with a message loop (the main thread) so the
+/// window outlives the command that asked for it.
+#[cfg(windows)]
+pub fn carrier(key: isize) -> isize {
+    use windows::core::w;
+    use windows::Win32::Foundation::HWND;
+    use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, WS_EX_TOOLWINDOW, WS_POPUP};
+    // One carrier per bar window, so a duplicated bar on another display keeps
+    // its own reservation instead of moving the shared one.
+    static CARRIERS: OnceLock<Mutex<HashMap<isize, isize>>> = OnceLock::new();
+    let carriers = CARRIERS.get_or_init(|| Mutex::new(HashMap::new()));
+    let Ok(mut carriers) = carriers.lock() else {
+        return 0;
+    };
+    if let Some(existing) = carriers.get(&key) {
+        if *existing != 0 {
+            return *existing;
+        }
+    }
+    let created = unsafe {
+        CreateWindowExW(
+            WS_EX_TOOLWINDOW,
+            w!("STATIC"),
+            w!(""),
+            WS_POPUP,
+            0,
+            0,
+            1,
+            1,
+            None,
+            None,
+            None,
+            None,
+        )
+    }
+    .unwrap_or_else(|_| HWND::default());
+    let carrier = created.0 as isize;
+    carriers.insert(key, carrier);
+    carrier
+}
+
+#[cfg(not(windows))]
+pub fn carrier(_key: isize) -> isize {
+    0
+}
+
+/// True when the desktop does not already reserve this edge.
+///
+/// A monitor whose taskbar sits on the requested edge (the usual case for a
+/// bottom bar on a primary display) cannot host an AppBar there: Explorer keeps
+/// the taskbar's strip and pushes the AppBar one thickness inside it, which is
+/// what made the bar hop up and fall back. The bar is drawn over the edge
+/// anyway, so there is nothing to reserve in that case.
+#[cfg(windows)]
+fn edge_is_free(
+    monitor_left: i32,
+    monitor_top: i32,
+    monitor_width: i32,
+    monitor_height: i32,
+    edge: u32,
+) -> bool {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::{
+        GetMonitorInfoW, MonitorFromPoint, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    };
+    let point = POINT {
+        x: monitor_left + monitor_width / 2,
+        y: monitor_top + monitor_height / 2,
+    };
+    let monitor = unsafe { MonitorFromPoint(point, MONITOR_DEFAULTTONEAREST) };
+    let mut info = MONITORINFO {
+        cbSize: std::mem::size_of::<MONITORINFO>() as u32,
+        ..Default::default()
+    };
+    if !unsafe { GetMonitorInfoW(monitor, &mut info) }.as_bool() {
+        return true;
+    }
+    if edge == ABE_BOTTOM {
+        info.rcWork.bottom >= info.rcMonitor.bottom
+    } else {
+        info.rcWork.top <= info.rcMonitor.top
+    }
+}
+
+/// The occupancy check is made once per monitor and edge: our own reservation
+/// changes the work area, and re-checking it later would read that as a taskbar.
+#[cfg(windows)]
+fn edge_free_cache() -> &'static Mutex<std::collections::HashMap<(i32, i32, u32), bool>> {
+    static CACHE: OnceLock<Mutex<std::collections::HashMap<(i32, i32, u32), bool>>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
 /// Reserve a full-width strip at the requested edge of a monitor.
 /// Returns the physical rectangle Windows actually reserved, or None when the
 /// AppBar API declined the request.
@@ -104,6 +205,18 @@ pub fn reserve(
         right: monitor_left + monitor_width,
         bottom,
     };
+
+    let free = {
+        let mut cache = edge_free_cache().lock().ok()?;
+        *cache
+            .entry((monitor_left, monitor_top, edge))
+            .or_insert_with(|| {
+                edge_is_free(monitor_left, monitor_top, monitor_width, monitor_height, edge)
+            })
+    };
+    if !free {
+        return None;
+    }
 
     // Layout effects legitimately repeat when a monitor or bar setting changes.
     // Reuse an identical reservation; querying an AppBar against its own current
@@ -147,6 +260,17 @@ pub fn reserve(
         let _ = SHAppBarMessage(ABM_QUERYPOS, &mut data);
         if SHAppBarMessage(ABM_SETPOS, &mut data) == 0 {
             return None;
+        }
+        // Explorer answers with a rect one thickness inside the edge when it
+        // still reports the strip reserved a moment ago — which is exactly the
+        // case after a release/re-register pair (fullscreen, cloak, DPI or
+        // display change). Left alone that both lifts the bar off its edge and
+        // leaves the work area 40px short, so snap the reservation onto the
+        // requested edge and let Explorer recompute the work area.
+        if data.rect.top != desired.top || data.rect.bottom != desired.bottom {
+            data.rect.top = desired.top;
+            data.rect.bottom = desired.bottom;
+            let _ = SHAppBarMessage(ABM_SETPOS, &mut data);
         }
     }
 

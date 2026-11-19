@@ -68,17 +68,6 @@ export function WallpaperLayer() {
   const pausedRef = useRef(false);
   /** Another player (SMTC) is actually playing → duck the wallpaper audio. */
   const [mediaPlaying, setMediaPlaying] = useState(false);
-  /** A hidden WebView2 window must not start a video: doing so can stall the
-   *  native window thread before the wallpaper is even shown. */
-  const [windowVisible, setWindowVisible] = useState(() => !document.hidden);
-
-  useEffect(() => {
-    const update = () => setWindowVisible(!document.hidden);
-    document.addEventListener("visibilitychange", update);
-    update();
-    return () => document.removeEventListener("visibilitychange", update);
-  }, []);
-
   // The window label is available synchronously. Resolving it from an async
   // import made an extra briefly run the main window's sync/embed effects.
   const encodedMonitor = windowMonitor(getWindowLabel());
@@ -245,7 +234,14 @@ export function WallpaperLayer() {
     v.addEventListener("stalled", onStalled);
     v.addEventListener("pause", onStalled);
     document.addEventListener("visibilitychange", onVisibility);
-    void (v.readyState >= 2 ? kick() : v.load());
+    // A video started while the window is still hidden can stall the native
+    // window thread, so the element is mounted (it covers the screen) and
+    // playback begins on the next visible frame.
+    void (document.hidden
+      ? v.load()
+      : v.readyState >= 2
+        ? kick()
+        : v.load());
 
     return () => {
       cancelled = true;
@@ -276,7 +272,7 @@ export function WallpaperLayer() {
     return () => window.clearInterval(id);
   }, [src]);
 
-  if (!windowVisible || kind === "none" || !path) return null;
+  if (kind === "none" || !path) return null;
 
   const transform = `scale(${wallpaper.scale}) translate(${wallpaper.offsetX}%, ${wallpaper.offsetY}%)`;
 

@@ -1,4 +1,10 @@
-import { applyCssTokens, useSettings, type ModuleKey, type Settings } from "../store/settings";
+import {
+  applyCssTokens,
+  hydrateSharedSettings,
+  useSettings,
+  type ModuleKey,
+  type Settings,
+} from "../store/settings";
 import { getWindowLabel, hasTauri } from "./bridge";
 import { disableModuleContextMenu } from "./contextMenu";
 
@@ -164,6 +170,9 @@ export async function setupSettingsSync(moduleKey?: ModuleKey) {
   // Every overlay module shares this suppression; the settings window is not a
   // module and keeps the native text-editing menu.
   if (moduleKey) disableModuleContextMenu();
+  // Dev and packaged launches are different origins with separate localStorage,
+  // so read the shared settings file before anything is measured or revealed.
+  await hydrateSharedSettings();
   const settings = useSettings.getState().settings;
   applyCssTokens(settings);
   // A per-display duplicate is shown/positioned by the backend; only the main

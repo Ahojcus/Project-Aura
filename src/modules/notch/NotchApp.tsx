@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   NOTCH_MODULE_LABELS,
+  moduleBackground,
   useModuleWindow,
   useSettings,
   type NotchWidgetKey,
@@ -27,6 +28,7 @@ import {
   type SystemSnapshot,
 } from "../../lib/bridge";
 import { dragHandle } from "../../lib/drag";
+import { NOTCH_WIDGET_GLYPH, NotchGlyph } from "../../lib/notchGlyphs";
 import { useDisplaysVersion, useFullscreen } from "../../lib/runtime";
 
 interface TimerState {
@@ -123,24 +125,6 @@ const DEFAULT_TAB_ORDER: NotchWidgetKey[] = [
 ];
 
 /** Short labels keep the opened notch's tab row calm and single-line. */
-const NOTCH_TAB_LABELS: Record<NotchWidgetKey, string> = {
-  run: "Run",
-  media: "Media",
-  musicLights: "Lights",
-  monitors: "System",
-  timer: "Timer",
-  bluetooth: "Bluetooth",
-  clipboard: "Clipboard",
-  shortcuts: "Shortcuts",
-  volume: "Volume",
-  shelf: "Shelf",
-  downloads: "Downloads",
-  cloak: "Cloak",
-  weather: "Weather",
-  forecast: "Forecast",
-  edgeLight: "Edge",
-};
-
 function weatherLabel(code: number): string {
   if (code === 0) return "Clear";
   if (code <= 3) return "Partly cloudy";
@@ -689,6 +673,11 @@ export function NotchApp() {
   // Push geometry to the native window (manual coordinates win instead).
   // Duplicated windows are anchored by the backend on their own display.
   const manualPos = winConf.x != null && winConf.y != null && !ownMonitor;
+  /* The native window is revealed before this page measures itself. Painting
+   * first showed the pill at the window's default spot (a few pixels in from
+   * the top-left) and then moved it into place, which looked like the notch
+   * dropping off the top edge. Keep it blank until the layout has landed. */
+  const [placed, setPlaced] = useState(false);
   useEffect(() => {
     let cancelled = false;
     void invoke("notch_apply_layout", {
@@ -704,14 +693,19 @@ export function NotchApp() {
           ? [winConf.monitor.x, winConf.monitor.y]
           : null,
     }).then(() => {
+      if (cancelled) return;
+      setPlaced(true);
       // Layout owns size; a configured manual position wins over its placement.
-      if (cancelled || !manualPos) return;
+      if (!manualPos) return;
       void invoke("window_apply", {
         label: windowLabel,
         x: winConf.x,
         y: winConf.y,
         monitor: winConf.monitor ? [winConf.monitor.x, winConf.monitor.y] : null,
       });
+    }).catch(() => {
+      // Never leave the notch invisible because a placement call failed.
+      if (!cancelled) setPlaced(true);
     });
     return () => {
       cancelled = true;
@@ -764,11 +758,18 @@ export function NotchApp() {
 
   const tabKeys = enabledWidgets;
 
+  if (!placed) return null;
+
   return (
     <div
       className={`notch-root${expanded ? " expanded" : ""}${hidden ? " module-hidden" : ""}`}
       data-placement={notch.placement}
-      style={{ "--notch-thickness": `${notch.thickness}px` } as CSSProperties}
+      style={
+        {
+          "--notch-thickness": `${notch.thickness}px`,
+          ...moduleBackground(notch.bgTransparency, true),
+        } as CSSProperties
+      }
       onMouseEnter={openHome}
       onMouseLeave={closeSoon}
       onPointerDown={clearNotchSelection}
@@ -779,48 +780,76 @@ export function NotchApp() {
       tabIndex={-1}
     >
       <div className="notch-bar">
+        {/* Artwork-led pill, the way NotchPixel's island reads at a glance. */}
         <button
-          className="notch-dot"
-          title={winConf.draggable ? "Drag to move" : "Notch"}
+          className="notch-lead"
+          title={winConf.draggable ? "Drag to move" : undefined}
           aria-label="Notch"
           onPointerDown={winConf.draggable ? dragHandle : undefined}
           onClick={() => (activeTab ? closePanel() : openTab("home"))}
-        />
-        {notch.collapsed.showName && <span className="notch-name">Aura</span>}
-        {notch.collapsed.showClock && (
-          <span className="notch-clock">
-            {clockText}
-            {ampm ? ` ${ampm}` : ""}
-          </span>
-        )}
-        {notch.collapsed.showTimer && timer.totalMs > 0 && (
-          <button className="notch-chip" title="Focus timer" onClick={() => openTab("timer")}>
-            {timer.finished ? "done" : formatTime(timer.leftMs)}
-          </button>
-        )}
-        {notch.collapsed.showMem && (
+        >
+          {notch.collapsed.showMedia && art ? (
+            <img className="notch-lead-art" src={art} alt="" />
+          ) : (
+            <span className="notch-lead-orb" />
+          )}
+        </button>
+        {notch.collapsed.showMedia && media?.title ? (
           <button
-            className="notch-chip"
-            title={`Memory ${memPct.toFixed(0)}% — open monitors`}
-            onClick={() => openTab("monitors")}
-          >
-            RAM {memPct.toFixed(0)}%
-          </button>
-        )}
-        {notch.collapsed.showNet && (
-          <button className="notch-chip" title="Download rate — open monitors" onClick={() => openTab("monitors")}>
-            ↓ {formatRate(sys?.netDownBps ?? 0)}
-          </button>
-        )}
-        {notch.collapsed.showMedia && media?.title && (
-          <button
-            className="notch-chip notch-media-chip"
-            title={`${media.title} — ${media.artist}`}
+            className="notch-now"
+            aria-label={`Now playing ${media.title}${media.artist ? ` by ${media.artist}` : ""}`}
             onClick={() => openTab("media")}
           >
-            {media.title}
-            {mediaProgress != null ? ` ${Math.round(mediaProgress)}%` : ""}
+            <span className="notch-now-title">{media.title}</span>
+            <span className="notch-now-artist">
+              {media.artist || (mediaPlaying ? "Playing" : "Paused")}
+            </span>
           </button>
+        ) : (
+          notch.collapsed.showName && (
+            <span className="notch-now">
+              <span className="notch-now-title">Aura</span>
+              <span className="notch-now-artist">Notch</span>
+            </span>
+          )
+        )}
+        <span className="notch-metrics">
+          {notch.collapsed.showTimer && timer.totalMs > 0 && (
+            <button className="notch-chip" title="Focus timer" onClick={() => openTab("timer")}>
+              {timer.finished ? "done" : formatTime(timer.leftMs)}
+            </button>
+          )}
+          {notch.collapsed.showMem && (
+            <button
+              className="notch-chip"
+              title={`Memory ${memPct.toFixed(0)}% — open monitors`}
+              onClick={() => openTab("monitors")}
+            >
+              RAM {memPct.toFixed(0)}%
+            </button>
+          )}
+          {notch.collapsed.showNet && (
+            <button
+              className="notch-chip"
+              title="Download rate — open monitors"
+              onClick={() => openTab("monitors")}
+            >
+              ↓ {formatRate(sys?.netDownBps ?? 0)}
+            </button>
+          )}
+          {notch.collapsed.showClock && (
+            <span className="notch-clock">
+              {clockText}
+              {ampm ? ` ${ampm}` : ""}
+            </span>
+          )}
+        </span>
+        {notch.collapsed.showMedia && mediaPlaying && (
+          <span className="notch-eq" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
         )}
       </div>
 
@@ -828,17 +857,23 @@ export function NotchApp() {
         <div className={`notch-panel${closing ? " closing" : ""}`}>
           <div className="notch-nav">
             <div className="notch-tabs">
-              <button className={activeTab === "home" ? "active" : ""} onClick={() => setActiveTab("home")}>
-                Home
+              <button
+                className={activeTab === "home" ? "active" : ""}
+                title="Home"
+                aria-label="Home"
+                onClick={() => setActiveTab("home")}
+              >
+                <NotchGlyph icon="home" />
               </button>
               {tabKeys.map((key) => (
                 <button
                   key={key}
                   className={activeTab === key ? "active" : ""}
                   title={NOTCH_MODULE_LABELS[key]}
+                  aria-label={NOTCH_MODULE_LABELS[key]}
                   onClick={() => setActiveTab((t) => (t === key ? "home" : key))}
                 >
-                  {NOTCH_TAB_LABELS[key]}
+                  <NotchGlyph icon={NOTCH_WIDGET_GLYPH[key]} />
                 </button>
               ))}
             </div>
@@ -847,11 +882,12 @@ export function NotchApp() {
                 className={pinned ? "active" : ""}
                 onClick={() => setPinned((p) => !p)}
                 title="Keep the notch open"
+                aria-label="Keep the notch open"
               >
-                Pin
+                <NotchGlyph icon="pin" size={16} />
               </button>
-              <button onClick={closePanel} title="Close">
-                Close
+              <button onClick={closePanel} title="Close" aria-label="Close">
+                <NotchGlyph icon="close" size={16} />
               </button>
             </div>
           </div>
@@ -1172,30 +1208,57 @@ function MediaWidget({
   if (!media?.title) {
     return (
       <div className="notch-section">
-        <span className="notch-title">Media</span>
         <span className="notch-muted">Nothing playing.</span>
       </div>
     );
   }
+  const elapsed = formatTime(media.positionMs);
+  const remaining = `-${formatTime(Math.max(0, media.durationMs - media.positionMs))}`;
   return (
-    <div className="notch-section">
-      <span className="notch-title">Media</span>
-      <div className="notch-media-head">
-        {art && <img key={art} className="notch-media-art" src={art} alt="" />}
-        <span className="notch-media-text">
-          <strong>{media.title}</strong>
-          <span className="notch-muted">{media.artist}</span>
-        </span>
-        <button onClick={() => void invoke("toggle_media_playback")}>{playing ? "Pause" : "Play"}</button>
-      </div>
-      {progress != null && (
-        <>
-          <progress className="notch-meter" max={100} value={progress} />
-          <span className="notch-media-time">
-            {formatTime(media.positionMs)} / {formatTime(media.durationMs)}
+    <div className="notch-section notch-media">
+      <div className="notch-media-top">
+        <div className="notch-media-artwrap">
+          {art ? <img key={art} className="notch-media-art" src={art} alt="" /> : <span className="notch-media-art" />}
+          <span className="notch-media-badge" aria-hidden="true">
+            <NotchGlyph icon="media" size={13} />
           </span>
-        </>
-      )}
+        </div>
+        <div className="notch-media-copy">
+          <strong className="notch-media-title">{media.title}</strong>
+          <span className="notch-media-artist">{media.artist || "Unknown artist"}</span>
+        </div>
+        <div className="notch-media-transport">
+          <button
+            onClick={() => void invoke("media_skip", { direction: "previous" })}
+            title="Previous"
+            aria-label="Previous track"
+          >
+            <NotchGlyph icon="previous" size={20} />
+          </button>
+          <button
+            className="primary"
+            onClick={() => void invoke("toggle_media_playback")}
+            title={playing ? "Pause" : "Play"}
+            aria-label={playing ? "Pause" : "Play"}
+          >
+            <NotchGlyph icon={playing ? "pause" : "play"} size={24} />
+          </button>
+          <button
+            onClick={() => void invoke("media_skip", { direction: "next" })}
+            title="Next"
+            aria-label="Next track"
+          >
+            <NotchGlyph icon="next" size={20} />
+          </button>
+        </div>
+      </div>
+      <div className="notch-media-rail">
+        <span className="notch-media-time">{elapsed}</span>
+        <span className="notch-media-track">
+          <span style={{ width: `${progress ?? 0}%` }} />
+        </span>
+        <span className="notch-media-time">{remaining}</span>
+      </div>
     </div>
   );
 }

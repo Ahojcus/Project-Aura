@@ -20,6 +20,13 @@
   /* Overlay surface opacity: lower values show more of the desktop behind. */
   --module-glass-strong: 88%;
   --module-glass: 78%;
+  /* Raw copies so a module scope can fade its surfaces without recursing. */
+  --surface-mix: var(--surface);
+  --surface-2-mix: var(--surface-2);
+  --line-mix: var(--line);
+  --bg-mix: var(--bg);
+  --module-shadow-x: 0 14px 34px;
+  --module-shadow-color: rgba(19, 27, 45, 0.14);
   --radius: 13px;
   --radius-sm: 8px;
   --ease: cubic-bezier(0.22, 0.8, 0.28, 1);
@@ -45,6 +52,8 @@
   --warn: #e0a83c;
   --shadow: 0 16px 38px rgba(0, 0, 0, 0.5);
   --shadow-soft: 0 2px 12px rgba(0, 0, 0, 0.32);
+  --module-shadow-x: 0 16px 38px;
+  --module-shadow-color: rgba(0, 0, 0, 0.5);
 }
 
 * {
@@ -229,16 +238,25 @@ select {
     180deg,
     color-mix(
       in srgb,
-      color-mix(in srgb, var(--surface) 96%, var(--accent) 4%) var(--module-glass-strong),
+      color-mix(in srgb, var(--surface-mix) 96%, var(--accent) 4%) var(--module-glass-strong),
       transparent
     ),
-    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+    color-mix(in srgb, var(--surface-mix) var(--module-glass), transparent)
   );
   border: 1px solid var(--line);
   border-radius: 20px;
+  /* Depth stays inside the rounded glass. The native hit region clips
+     everything ~8px outside the widget, which used to cut the wide drop
+     shadow into a rectangular underglow; the inset glow fades along the
+     border radius, so the light underneath reads as round. The small outer
+     shadow fits inside the 8px region padding and is never clipped. */
   box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    var(--shadow);
+    inset 0 1px 0
+      color-mix(in srgb, rgba(255, 255, 255, 0.05), transparent var(--module-chrome-fade, 0%)),
+    inset 0 -14px 24px -18px
+      color-mix(in srgb, rgba(0, 0, 0, 0.55), transparent var(--module-chrome-fade, 0%)),
+    0 2px 6px
+      color-mix(in srgb, rgba(19, 27, 45, 0.18), transparent var(--module-chrome-fade, 0%));
   color: var(--fg);
 }
 
@@ -307,7 +325,7 @@ select {
   height: 100%;
   padding: 12px;
   overflow: auto;
-  background: color-mix(in srgb, var(--surface) var(--module-glass), transparent);
+  background: color-mix(in srgb, var(--surface-mix) var(--module-glass), transparent);
   border: 1px solid var(--line);
   border-radius: 15px;
   box-shadow: var(--shadow);
@@ -622,16 +640,19 @@ select {
     180deg,
     color-mix(
       in srgb,
-      color-mix(in srgb, var(--surface) 97%, #fff 3%) var(--module-glass-strong),
+      color-mix(in srgb, var(--surface-mix) 97%, #fff 3%) var(--module-glass-strong),
       transparent
     ),
-    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+    color-mix(in srgb, var(--surface-mix) var(--module-glass), transparent)
   );
   border: 1px solid var(--line);
   border-radius: 999px;
+  /* The pill fills its native window exactly, so any outer drop shadow is cut
+     at the window rectangle and fills the rounded corners as a rectangular
+     underglow. Keep the depth inside the capsule instead. */
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.06),
-    var(--shadow);
+    inset 0 -12px 20px -16px rgba(0, 0, 0, 0.6);
   white-space: nowrap;
 }
 
@@ -680,21 +701,6 @@ select {
   color: var(--fg);
 }
 
-/* Only the media title may consume the remaining collapsed width; the small
-   RAM/network/timer chips keep their natural size instead of all becoming
-   ellipsized together. */
-.notch-chip:not(.notch-media-chip) {
-  flex: 0 0 auto;
-}
-
-.notch-media-chip {
-  flex: 1 1 auto;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .notch-clock {
   font-variant-numeric: tabular-nums;
   color: var(--muted);
@@ -711,16 +717,16 @@ select {
     180deg,
     color-mix(
       in srgb,
-      color-mix(in srgb, var(--surface) 97%, #fff 2%) var(--module-glass-strong),
+      color-mix(in srgb, var(--surface-mix) 97%, #fff 2%) var(--module-glass-strong),
       transparent
     ),
-    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+    color-mix(in srgb, var(--surface-mix) var(--module-glass), transparent)
   );
   border: 1px solid var(--line);
   border-radius: 18px;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    var(--shadow);
+    inset 0 -18px 30px -24px rgba(0, 0, 0, 0.5);
   animation: notch-panel-in var(--med) var(--ease) both;
 }
 
@@ -935,21 +941,6 @@ select {
   background: var(--accent-soft);
   outline: none;
 }
-
-.notch-media-art {
-  width: 48px;
-  height: 48px;
-  object-fit: cover;
-  border: 0;
-  border-radius: 10px;
-}
-
-.notch-media-head {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-}
-
 .notch-list {
   display: flex;
   flex-direction: column;
@@ -1018,14 +1009,16 @@ select {
   padding: 0 14px;
   background: linear-gradient(
     180deg,
-    color-mix(in srgb, var(--surface) var(--module-glass-strong), transparent),
-    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+    color-mix(in srgb, var(--surface-mix) var(--module-glass-strong), transparent),
+    color-mix(in srgb, var(--surface-mix) var(--module-glass), transparent)
   );
   border-bottom: 1px solid var(--line);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
     var(--shadow-soft);
-  backdrop-filter: blur(18px) saturate(1.15);
+  /* The blur belongs to the background: at full transparency it goes too. */
+  backdrop-filter: blur(calc(18px * var(--module-solid-ratio, 0.78) / 0.78))
+    saturate(calc(1 + 0.15 * var(--module-solid-ratio, 0.78) / 0.78));
 }
 
 .sb-root.bottom .sb-bar {
@@ -1584,6 +1577,23 @@ body[data-module="settings"] #root {
 
 /* ------------------------------------------------- module shared behaviours */
 
+/* Background transparency covers the module's whole chrome, not just its card:
+   inner fields and chips, hairlines and the drop shadow all fade with it. At
+   100% only the content is left, so no panel-shaped background stays behind the
+   widgets. The raw tokens are read from `--surface-mix` & co. so this scope can
+   rewrite the live tokens without a cyclic reference. */
+.clock-root,
+.todo-root,
+.notch-root,
+.sb-root {
+  --bg: color-mix(in srgb, var(--bg-mix) var(--module-solid, 88%), transparent);
+  --surface: color-mix(in srgb, var(--surface-mix) var(--module-solid, 88%), transparent);
+  --surface-2: color-mix(in srgb, var(--surface-2-mix) var(--module-glass, 78%), transparent);
+  --line: color-mix(in srgb, var(--line-mix), transparent var(--module-chrome-fade, 0%));
+  --shadow: var(--module-shadow-x)
+    color-mix(in srgb, var(--module-shadow-color), transparent var(--module-chrome-fade, 0%));
+}
+
 /* Overlay modules are desktop widgets, not documents. A press or drag on a
    surface must not leave a text selection behind; form fields stay editable. */
 body[data-module="clock"],
@@ -1707,14 +1717,14 @@ body[data-module] [contenteditable="true"] {
     180deg,
     color-mix(
       in srgb,
-      color-mix(in srgb, var(--surface) 97%, #fff 2%) var(--module-glass-strong),
+      color-mix(in srgb, var(--surface-mix) 97%, #fff 2%) var(--module-glass-strong),
       transparent
     ),
-    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+    color-mix(in srgb, var(--surface-mix) var(--module-glass), transparent)
   );
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.05),
-    0 -6px 18px rgba(0, 0, 0, 0.12);
+    inset 0 -12px 20px -16px rgba(0, 0, 0, 0.6);
 }
 
 .notch-root.expanded .notch-bar .notch-chip {
@@ -1741,14 +1751,14 @@ body[data-module] [contenteditable="true"] {
     180deg,
     color-mix(
       in srgb,
-      color-mix(in srgb, var(--surface) 97%, #fff 2%) var(--module-glass-strong),
+      color-mix(in srgb, var(--surface-mix) 97%, #fff 2%) var(--module-glass-strong),
       transparent
     ),
-    color-mix(in srgb, var(--surface) var(--module-glass), transparent)
+    color-mix(in srgb, var(--surface-mix) var(--module-glass), transparent)
   );
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    var(--shadow);
+    inset 0 -18px 30px -24px rgba(0, 0, 0, 0.5);
   transform-origin: top center;
   animation: island-in var(--med) var(--ease) both;
 }
@@ -1776,7 +1786,8 @@ body[data-module] [contenteditable="true"] {
     color-mix(in srgb, var(--surface) 96%, transparent),
     color-mix(in srgb, var(--surface) 82%, transparent)
   );
-  backdrop-filter: blur(20px) saturate(1.15);
+  backdrop-filter: blur(calc(20px * var(--module-solid-ratio, 0.98) / 0.98))
+    saturate(calc(1 + 0.15 * var(--module-solid-ratio, 0.98) / 0.98));
 }
 
 .notch-tabs {
@@ -2044,56 +2055,6 @@ body[data-module] [contenteditable="true"] {
   color: var(--fg);
   text-decoration: underline;
 }
-
-.notch-media-head {
-  gap: 10px;
-}
-
-.notch-media-art {
-  flex: 0 0 50px;
-  width: 50px;
-  height: 50px;
-  border: 1px solid color-mix(in srgb, var(--line) 70%, transparent);
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--surface-2) 60%, transparent);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
-  object-fit: cover;
-}
-
-.notch-media-text {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-
-.notch-media-text strong,
-.notch-media-text .notch-muted {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.notch-media-text strong {
-  font-size: 13px;
-  font-weight: 650;
-  letter-spacing: 0.005em;
-}
-
-.notch-media-head button {
-  flex: 0 0 auto;
-}
-
-.notch-media-time {
-  align-self: flex-end;
-  color: var(--muted);
-  font-size: 10.5px;
-  font-variant-numeric: tabular-nums;
-  letter-spacing: 0.02em;
-}
-
 .music-lights {
   position: relative;
   height: 58px;
@@ -2810,7 +2771,7 @@ body[data-module="edgelight"] {
 .edge-light-inner {
   position: absolute;
   inset: 0;
-  border-radius: 18px;
+  border-radius: 18rem;
   pointer-events: none;
 }
 
@@ -2840,4 +2801,440 @@ body[data-module="edgelight"] {
     opacity: 0.92;
     filter: blur(0);
   }
+}
+
+/* ------------------------------------------------- notchpixel-style island */
+/* A pure-black Dynamic-Island card: flush with the top edge, rounded where it
+   meets the screen, an artwork pill with an equaliser while it rests, then one
+   black card with an icon tab row, flat tiles and a music card. Everything here
+   overrides the glass treatment above on purpose. */
+
+.notch-root {
+  /* Alpha follows the notch's own background-transparency setting. */
+  --island: rgba(4, 4, 6, var(--island-alpha, 0.98));
+  --island-2: #101012;
+  --island-3: #17171a;
+  --island-line: rgba(255, 255, 255, 0.08);
+  /* The island is always dark, whichever desktop theme is active. */
+  --fg: #f5f6f8;
+  --muted: #9a9ea7;
+  --surface: #0b0b0e;
+  --surface-2: #191a1e;
+  --line: rgba(255, 255, 255, 0.09);
+  --bg: #101013;
+  --shadow: none;
+  color: var(--fg);
+}
+
+.notch-bar {
+  position: relative;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 12px;
+  border: 0;
+  /* Keeps the artwork and equaliser inside the rounded notch silhouette. */
+  overflow: hidden;
+  border-radius: 0 0 18px 18px;
+  background: var(--island);
+  box-shadow: none;
+  transition:
+    border-radius var(--med) var(--ease),
+    padding var(--med) var(--ease);
+}
+
+.notch-root[data-placement^="bottom"] .notch-bar {
+  border-radius: 18px 18px 0 0;
+}
+
+.notch-lead {
+  display: grid;
+  place-items: center;
+  flex: 0 0 26px;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: color-mix(in srgb, #fff 9%, transparent);
+  overflow: hidden;
+}
+
+.notch-lead-art {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 8px;
+}
+
+.notch-lead-orb {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 8px color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.notch-now {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.notch-now:hover {
+  border-color: transparent;
+  background: transparent;
+}
+
+.notch-now-title {
+  overflow: hidden;
+  color: var(--fg);
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-now-artist {
+  overflow: hidden;
+  color: color-mix(in srgb, var(--fg) 56%, transparent);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-metrics {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+}
+
+.notch-bar .notch-chip {
+  flex: 0 0 auto;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 60%, transparent);
+  font-size: 10.5px;
+  font-weight: 550;
+  font-variant-numeric: tabular-nums;
+}
+
+.notch-bar .notch-chip:hover {
+  border-color: transparent;
+  background: transparent;
+  color: var(--fg);
+}
+
+.notch-clock {
+  margin-left: 3px;
+  color: var(--fg);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Three bars, the way the island shows playback while it rests. */
+.notch-eq {
+  display: flex;
+  align-items: flex-end;
+  flex: 0 0 auto;
+  gap: 2.5px;
+  height: 14px;
+  padding-right: 2px;
+}
+
+.notch-eq i {
+  width: 2.5px;
+  height: 40%;
+  border-radius: 2px;
+  background: #fff;
+  opacity: 0.92;
+  animation: notch-eq 900ms ease-in-out infinite alternate;
+}
+
+.notch-eq i:nth-child(2) {
+  animation-duration: 1100ms;
+  animation-delay: -300ms;
+}
+
+.notch-eq i:nth-child(3) {
+  animation-duration: 780ms;
+  animation-delay: -600ms;
+}
+
+@keyframes notch-eq {
+  from {
+    height: 25%;
+  }
+  to {
+    height: 100%;
+  }
+}
+
+/* Opened, the bar and the card below read as one piece of black. */
+.notch-root.expanded .notch-bar {
+  justify-content: flex-start;
+  padding: 0 14px;
+  border-radius: 0;
+  background: var(--island);
+  box-shadow: none;
+}
+
+.notch-root.expanded[data-placement^="bottom"] .notch-bar {
+  border-radius: 0;
+}
+
+.notch-panel {
+  padding: 10px 12px 14px;
+  border: 0;
+  border-radius: 0 0 26px 26px;
+  background: var(--island);
+  box-shadow: none;
+  scrollbar-width: none;
+}
+
+.notch-panel::-webkit-scrollbar {
+  display: none;
+}
+
+.notch-root[data-placement^="bottom"] .notch-panel {
+  border-radius: 26px 26px 0 0;
+}
+
+/* Icon tab row: one accent dot under the active tab, pin and close on the end. */
+.notch-nav {
+  position: sticky;
+  top: -8px;
+  margin: -10px -12px 10px;
+  padding: 8px 10px;
+  border: 0;
+  background: var(--island);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.notch-tabs {
+  justify-content: center;
+}
+
+.notch-tabs button,
+.notch-actions button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 52%, transparent);
+}
+
+.notch-tabs button:hover,
+.notch-actions button:hover {
+  background: color-mix(in srgb, #fff 8%, transparent);
+  color: var(--fg);
+}
+
+.notch-tabs button.active {
+  background: transparent;
+  color: var(--fg);
+}
+
+.notch-tabs button.active::after {
+  content: "";
+  position: absolute;
+  bottom: 1px;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin-left: -2px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.notch-actions {
+  gap: 1px;
+  padding-left: 6px;
+  border-left: 1px solid var(--island-line);
+}
+
+.notch-actions button.active {
+  background: color-mix(in srgb, #fff 10%, transparent);
+  color: var(--fg);
+}
+
+/* Flat tiles inside the card. */
+.notch-section {
+  padding: 12px;
+  border: 0;
+  border-radius: 20px;
+  background: #101012;
+  box-shadow: none;
+}
+
+.notch-section::before {
+  display: none;
+}
+
+.notch-section:hover {
+  background: #141417;
+}
+
+.notch-section button {
+  border: 1px solid var(--island-line);
+  border-radius: 9px;
+  background: var(--island-2);
+  color: var(--fg);
+}
+
+.notch-section button:hover {
+  border-color: rgba(255, 255, 255, 0.18);
+  background: var(--island-3);
+  box-shadow: none;
+}
+
+.notch-empty {
+  border: 1px dashed var(--island-line);
+  border-radius: 16px;
+  background: #101012;
+  color: var(--muted);
+}
+
+/* Music card: artwork with a badge, bold title, tinted artist, transport, rail. */
+.notch-media {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px;
+}
+
+.notch-media-top {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.notch-media-artwrap {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.notch-media-art {
+  display: block;
+  width: 84px;
+  height: 84px;
+  border: 0;
+  border-radius: 22px;
+  background: #16171a;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+  object-fit: cover;
+}
+
+.notch-media-badge {
+  position: absolute;
+  right: -6px;
+  bottom: -6px;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.notch-media-copy {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.notch-media-title {
+  overflow: hidden;
+  font-size: 16px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-media-artist {
+  overflow: hidden;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notch-media-transport {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.notch-media-transport button {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: color-mix(in srgb, var(--fg) 72%, transparent);
+}
+
+.notch-media-transport button:hover {
+  background: color-mix(in srgb, #fff 9%, transparent);
+  color: var(--fg);
+}
+
+.notch-media-transport button.primary {
+  width: 40px;
+  height: 40px;
+  color: var(--fg);
+}
+
+.notch-media-rail {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.notch-media-time {
+  color: color-mix(in srgb, var(--fg) 66%, transparent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
+.notch-media-track {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+.notch-media-track > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--accent) 55%, #fff), var(--accent));
 }

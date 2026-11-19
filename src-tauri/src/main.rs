@@ -59,6 +59,19 @@ fn main() {
             monit::spawn_display_thread(app.handle().clone());
             monit::spawn_fullscreen_thread(app.handle().clone());
             position_windows(app)?;
+            // Seelen UI keeps a full-width toolbar on the top edge. Its window
+            // is in the same topmost band and re-raises itself, which slid it
+            // over the Smart Notch and made the pill look detached from the
+            // screen edge. Guard the z-order while the notch is on screen so
+            // both tools can run together.
+            #[cfg(windows)]
+            {
+                let handle = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(200));
+                    commands::enforce_notch_geometry(&handle);
+                });
+            }
             create_wallpaper_extras(app)?;
             build_tray(app)?;
             spawn_startup_settle(app.handle().clone(), launched_at_signin);
@@ -102,6 +115,7 @@ fn main() {
             commands::wallpaper_set_embedded,
             commands::wallpaper_sync_displays,
             commands::toggle_media_playback,
+            commands::media_skip,
             commands::get_media_info,
             commands::get_media_art,
             commands::get_audio_sessions,
@@ -121,6 +135,8 @@ fn main() {
             commands::notch_chime,
             commands::autostart_set,
             commands::autostart_is_enabled,
+            commands::settings_read,
+            commands::settings_write,
             commands::startup_is_ready,
             commands::app_shortcut_set,
             commands::get_monitors,
@@ -167,6 +183,7 @@ fn create_wallpaper_extras(app: &tauri::App) -> tauri::Result<()> {
             let size = monitor.size();
             let _ = window.set_size(tauri::PhysicalSize::new(size.width.max(1), size.height.max(1)));
             let _ = window.set_position(tauri::PhysicalPosition::new(pos.x, pos.y));
+            crate::wallpaper_win::fit_window(&window);
             let _ = window.set_ignore_cursor_events(true);
             let _ = window.set_focusable(false);
         }
@@ -297,6 +314,9 @@ fn position_windows(app: &tauri::App) -> tauri::Result<()> {
         if let Some(ww) = app.get_webview_window("wallpaper") {
             let _ = ww.set_size(tauri::PhysicalSize::new(size.width, size.height));
             let _ = ww.set_position(tauri::PhysicalPosition::new(monitor.position().x, monitor.position().y));
+            // Tauri sizes the *client* area, so the window frame pushes the
+            // backdrop past the display edge; fit the client to the monitor.
+            crate::wallpaper_win::fit_window(&ww);
             let _ = ww.set_ignore_cursor_events(true);
         }
     }

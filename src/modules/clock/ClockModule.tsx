@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useModuleWindow, useSettings } from "../../store/settings";
+import { moduleBackground, useModuleWindow, useSettings } from "../../store/settings";
 import { dragHandle } from "../../lib/drag";
 import { useHitRegion } from "../../lib/hitRegion";
 
@@ -55,6 +55,7 @@ export function ClockModule() {
   const time = `${hour}:${t.minute}${clock.showSeconds ? ":" + t.second : ""}`;
   const dateText = `${t.weekday}, ${t.month} ${t.day}${clock.showYear ? `, ${t.year}` : ""}`;
   const drag = draggable ? { onPointerDown: dragHandle, title: "Drag to move" } : {};
+  const bgStyle = moduleBackground(clock.bgTransparency);
 
   if (clock.layout === "analog") {
     const h = (Number(t.hour) % 12) + Number(t.minute) / 60;
@@ -75,7 +76,7 @@ export function ClockModule() {
       );
     };
     return (
-      <div className="clock-root" {...drag}>
+      <div className="clock-root" style={bgStyle} {...drag}>
         <svg width="160" height="160" viewBox="0 0 160 160" role="img" aria-label={`Analog clock ${time}`}>
           <circle cx="80" cy="80" r="74" fill="none" stroke="currentColor" strokeWidth="1" />
           {Array.from({ length: 12 }).map((_, i) => {
@@ -102,7 +103,7 @@ export function ClockModule() {
 
   if (clock.layout === "minimal") {
     return (
-      <div className="clock-root" {...drag}>
+      <div className="clock-root" style={bgStyle} {...drag}>
         <div className="clock-minimal">
           {time}
           {clock.format12h && <span className="clock-ampm">{t.ampm}</span>}
@@ -113,7 +114,7 @@ export function ClockModule() {
   }
 
   return (
-    <div className="clock-root" {...drag}>
+    <div className="clock-root" style={bgStyle} {...drag}>
       <div className="clock-digital">
         {time}
         {clock.format12h && <span className="clock-ampm">{t.ampm}</span>}
