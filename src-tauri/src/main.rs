@@ -63,13 +63,14 @@ fn main() {
             // is in the same topmost band and re-raises itself, which slid it
             // over the Smart Notch and made the pill look detached from the
             // screen edge. Guard the z-order while the notch is on screen so
-            // both tools can run together.
+            // both tools can run together, and re-pin the status bar, which the
+            // shell's own AppBar placement pass lifts off its edge.
             #[cfg(windows)]
             {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || loop {
                     std::thread::sleep(std::time::Duration::from_millis(200));
-                    commands::enforce_notch_geometry(&handle);
+                    commands::enforce_edge_geometry(&handle);
                 });
             }
             create_wallpaper_extras(app)?;
@@ -309,6 +310,13 @@ pub fn open_external(target: &str) -> std::io::Result<()> {
 /// here races that restore and used to pull clock/todo/notch back to their
 /// startup coordinates after a restart.
 fn position_windows(app: &tauri::App) -> tauri::Result<()> {
+    // Module windows are decoration-free, but Windows can still paint a caption
+    // plaque over them; strip the caption style once at startup.
+    for (label, window) in app.webview_windows() {
+        if label != "settings" {
+            commands::strip_caption(&window);
+        }
+    }
     if let Ok(Some(monitor)) = app.primary_monitor() {
         let size = monitor.size();
         if let Some(ww) = app.get_webview_window("wallpaper") {

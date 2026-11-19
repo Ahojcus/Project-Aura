@@ -239,6 +239,11 @@ pub fn set_module_visible(
             }
         }
         let _ = window.show();
+        // Tauri re-applies its window style on show, so the caption strip has
+        // to run again here — otherwise DWM can draw a title plaque over the
+        // module's own header row.
+        #[cfg(windows)]
+        strip_caption(&window);
         // Re-reveal must not reshuffle the stack: re-apply the module's
         // remembered level, then restack its whole band so the sidebar
         // priority (not activation recency) decides who is on top.
@@ -416,7 +421,7 @@ pub fn window_apply(
             let py = mon.position().y + (y * scale).round() as i32;
             let _ = w.set_position(tauri::PhysicalPosition::new(px, py));
             #[cfg(windows)]
-            if base_label(&label) == "notch" {
+            if matches!(base_label(&label), "notch" | "statusbar") {
                 if let Ok(mut geom) = notch_geometry().lock() {
                     if let Some(slot) = geom.get_mut(&label) {
                         slot.0 = px;
@@ -515,6 +520,8 @@ fn apply_level(app: &AppHandle, window: &tauri::WebviewWindow, level: &str) {
         }
         _ => {}
     }
+    #[cfg(windows)]
+    strip_caption(window);
 }
 
 /// A click on a bottom-band module panel (to-do, clock, statusbar…) activates
@@ -796,11 +803,12 @@ fn is_above(hwnd: windows::Win32::Foundation::HWND, toolbar: windows::Win32::Fou
     false
 }
 
-/// Put every visible Smart Notch back where it belongs: on its own screen edge
-/// (Seelen UI's toolbar placement drags border windows down by its height) and
-/// above that toolbar, so the pill still reads as one piece with the screen top.
+/// Put every visible edge module back where its layout put it: the Smart Notch
+/// on its own screen edge (Seelen UI's toolbar placement drags border windows
+/// down by its height) and above that toolbar, so the pill still reads as one
+/// piece with the screen top, and the status bar flush on its configured edge.
 #[cfg(windows)]
-pub fn enforce_notch_geometry(app: &AppHandle) {
+pub fn enforce_edge_geometry(app: &AppHandle) {
     use windows::core::w;
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -818,7 +826,8 @@ pub fn enforce_notch_geometry(app: &AppHandle) {
         .filter(|h| !h.0.is_null());
 
     for (label, window) in app.webview_windows() {
-        if base_label(&label) != "notch" {
+        let base = base_label(&label);
+        if base != "notch" && base != "statusbar" {
             continue;
         }
         let Some((x, y, cw, ch)) = wanted.get(&label).copied() else { continue };
@@ -831,7 +840,9 @@ pub fn enforce_notch_geometry(app: &AppHandle) {
             continue;
         }
         let moved = (rect.left - x).abs() > 2 || (rect.top - y).abs() > 2;
-        let buried = toolbar.map(|t| !is_above(hwnd, t)).unwrap_or(false);
+        // The toolbar only overlaps the top edge, so only the notch has to sit
+        // above it; the status bar is snapped back into place, not restacked.
+        let buried = base == "notch" && toolbar.map(|t| !is_above(hwnd, t)).unwrap_or(false);
         if !moved && !buried {
             if let Ok(mut d) = drift.lock() {
                 d.insert(label.clone(), 0);
@@ -839,15 +850,17 @@ pub fn enforce_notch_geometry(app: &AppHandle) {
             continue;
         }
         // Being covered by the toolbar is fixed on the spot: the pill must not
-        // sit behind it even for a moment. A moved window needs two samples,
-        // because a single nudge can be a transient of a shell placement pass.
+        // sit behind it even for a moment. A moved notch needs two samples,
+        // because a single nudge can be a transient of a shell placement pass;
+        // the status bar is re-pinned at once so a repeated lift cannot make it
+        // flicker between its edge and the shell's spot.
         let count = {
             let Ok(mut d) = drift.lock() else { continue };
             let c = d.entry(label.clone()).or_insert(0);
             *c = c.saturating_add(1);
             *c
         };
-        if moved && !buried && count < 2 {
+        if moved && !buried && count < if base == "statusbar" { 1 } else { 2 } {
             continue;
         }
         let _ = unsafe { SetWindowPos(hwnd, HWND_TOPMOST, x, y, cw, ch, SWP_NOACTIVATE) };
@@ -1076,11 +1089,24 @@ pub fn statusbar_apply_layout(
         0.0
     };
 
+    let px = monitor.position().x + (inset * scale).round() as i32;
+    let py = monitor.position().y + (y * scale).round() as i32;
     let _ = w.set_size(tauri::LogicalSize::new(width.round(), height.round()));
-    let _ = w.set_position(tauri::PhysicalPosition::new(
-        monitor.position().x + (inset * scale).round() as i32,
-        monitor.position().y + (y * scale).round() as i32,
-    ));
+    let _ = w.set_position(tauri::PhysicalPosition::new(px, py));
+    // Remember the exact strip so the geometry guard can put the bar back on
+    // its edge after Explorer's own AppBar placement pass lifts it up.
+    #[cfg(windows)]
+    if let Ok(mut geom) = notch_geometry().lock() {
+        geom.insert(
+            label,
+            (
+                px,
+                py,
+                (width * scale).round() as i32,
+                (height * scale).round() as i32,
+            ),
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1275,6 +1301,69 @@ fn hwnd_of(_window: &tauri::WebviewWindow) -> Option<()> {
 }
 
 /// Public command so the wallpaper window can request (un)embedding itself too.
+/// Strips the caption bits Tauri leaves on a `decorations: false` window and
+/// tells DWM to stop drawing non-client chrome. Without this Windows sometimes
+/// paints a small light title plaque (app icon + "Tauri App") inside a module
+/// window — over the To-Do header, for instance.
+#[cfg(windows)]
+pub fn strip_caption(window: &tauri::WebviewWindow) {
+    use windows::Win32::Foundation::RECT;
+    use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_NCRENDERING_POLICY};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW, SetWindowPos, GWL_STYLE,
+        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
+        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
+    };
+
+    let Some(hwnd) = hwnd_of(window) else { return };
+    let clear = (WS_CAPTION.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0) as isize;
+    let had_caption = unsafe {
+        let style = GetWindowLongPtrW(hwnd, GWL_STYLE);
+        if style & clear != 0 {
+            SetWindowLongPtrW(hwnd, GWL_STYLE, style & !clear);
+            true
+        } else {
+            false
+        }
+    };
+    unsafe {
+        // DWM keeps the caption frame it already composed until the window's
+        // size changes, even after the caption bits are gone (SWP_FRAMECHANGED
+        // alone does not invalidate it on a transparent undecorated window).
+        // A one-pixel resize that is reverted immediately makes it recompose
+        // without the title plaque.
+        if had_caption {
+            let mut rect = RECT::default();
+            if GetWindowRect(hwnd, &mut rect).is_ok() {
+                let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
+                let flags = SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE;
+                let _ = SetWindowPos(hwnd, None, 0, 0, w, h + 1, flags);
+                let _ = SetWindowPos(hwnd, None, 0, 0, w, h, flags);
+            }
+        }
+        // DWMNCRP_DISABLED: no caption, no frame, only the webview's pixels.
+        let policy: i32 = 1;
+        let _ = DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_NCRENDERING_POLICY,
+            &policy as *const _ as *const _,
+            4,
+        );
+        let _ = SetWindowPos(
+            hwnd,
+            None,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+        );
+    }
+}
+
+#[cfg(not(windows))]
+pub fn strip_caption(_window: &tauri::WebviewWindow) {}
+
 #[tauri::command]
 pub fn wallpaper_set_embedded(app: AppHandle, embed: bool) -> bool {
     wallpaper_embed(&app, embed)
@@ -1480,6 +1569,7 @@ pub fn module_sync_displays(
                     let (px, py) = duplicate_anchor(&module2, &monitor, w, h);
                     let _ = window.set_position(tauri::PhysicalPosition::new(px, py));
                 }
+                strip_caption(&window);
                 let _ = window.set_ignore_cursor_events(click_through);
                 let _ = window.set_focusable(!click_through);
                 let _ = window.show();
@@ -1505,6 +1595,7 @@ pub fn module_sync_displays(
                 "--autoplay-policy=no-user-gesture-required --disable-features=CalculateNativeWinOcclusion --disable-renderer-backgrounding --disable-background-timer-throttling --disable-backgrounding-occluded-windows",
             );
             if let Ok(window) = builder.build() {
+                strip_caption(&window);
                 let _ = window.set_size(tauri::LogicalSize::new(w, h));
                 let _ = window.set_position(tauri::PhysicalPosition::new(px, py));
                 let _ = window.set_ignore_cursor_events(click_through);

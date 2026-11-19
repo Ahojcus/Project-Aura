@@ -696,7 +696,10 @@ export function NotchApp() {
       if (cancelled) return;
       setPlaced(true);
       // Layout owns size; a configured manual position wins over its placement.
-      if (!manualPos) return;
+      // While the panel is expanded the manual position would pin its left edge
+      // and the wider panel would grow out to the right, so the layout's own
+      // edge placement (centred on a centre anchor) owns that frame.
+      if (!manualPos || expanded) return;
       void invoke("window_apply", {
         label: windowLabel,
         x: winConf.x,
