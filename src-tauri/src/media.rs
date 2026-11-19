@@ -192,6 +192,12 @@ fn extract_art(
     let stream = reference.OpenReadAsync()?.get()?;
     let size = stream.Size()?.min(i32::MAX as u64) as u32;
     let reader = DataReader::CreateDataReader(&stream.cast::<IInputStream>()?)?;
+    // The stream is reported asynchronously: without loading it first ReadBytes
+    // returns nothing (or fails), which is why the artwork stayed blank.
+    if size == 0 {
+        return Err("empty thumbnail".into());
+    }
+    reader.LoadAsync(size)?.get()?;
     let mut bytes = vec![0u8; size as usize];
     reader.ReadBytes(&mut bytes)?;
     if bytes.is_empty() {

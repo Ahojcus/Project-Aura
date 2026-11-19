@@ -1888,6 +1888,12 @@ body[data-module] [contenteditable="true"] {
   height: 100%;
 }
 
+/* The music card needs both columns: at half width its title and artist were
+   squeezed to nothing between the artwork and the transport buttons. */
+.notch-cell-wide {
+  grid-column: 1 / -1;
+}
+
 .notch-detail {
   width: 100%;
 }
@@ -3140,6 +3146,12 @@ body[data-module="edgelight"] {
   background: #16171a;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
   object-fit: cover;
+}
+
+.notch-media-placeholder {
+  display: grid;
+  place-items: center;
+  color: color-mix(in srgb, var(--fg) 32%, transparent);
 }
 
 .notch-media-badge {

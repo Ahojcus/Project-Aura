@@ -70,6 +70,7 @@ fn main() {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || loop {
                     std::thread::sleep(std::time::Duration::from_millis(200));
+                    commands::enforce_module_chrome(&handle);
                     commands::enforce_edge_geometry(&handle);
                 });
             }

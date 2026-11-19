@@ -1310,9 +1310,9 @@ pub fn strip_caption(window: &tauri::WebviewWindow) {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::Graphics::Dwm::{DwmSetWindowAttribute, DWMWA_NCRENDERING_POLICY};
     use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, GetWindowRect, SetWindowLongPtrW, SetWindowPos, GWL_STYLE,
-        SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, WS_CAPTION,
-        WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
+        GetWindowLongPtrW, GetWindowRect, IsWindowVisible, SetWindowLongPtrW, SetWindowPos,
+        GWL_STYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER,
+        WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
     };
 
     let Some(hwnd) = hwnd_of(window) else { return };
@@ -1331,8 +1331,9 @@ pub fn strip_caption(window: &tauri::WebviewWindow) {
         // size changes, even after the caption bits are gone (SWP_FRAMECHANGED
         // alone does not invalidate it on a transparent undecorated window).
         // A one-pixel resize that is reverted immediately makes it recompose
-        // without the title plaque.
-        if had_caption {
+        // without the title plaque. A shown window always gets that nudge, so a
+        // plaque composed at any earlier moment cannot survive the reveal.
+        if had_caption || IsWindowVisible(hwnd).as_bool() {
             let mut rect = RECT::default();
             if GetWindowRect(hwnd, &mut rect).is_ok() {
                 let (w, h) = (rect.right - rect.left, rect.bottom - rect.top);
@@ -1363,6 +1364,32 @@ pub fn strip_caption(window: &tauri::WebviewWindow) {
 
 #[cfg(not(windows))]
 pub fn strip_caption(_window: &tauri::WebviewWindow) {}
+
+/// Keep the caption style off the module windows.
+///
+/// Stripping it once is not enough: Tauri re-applies its window style after a
+/// show, and whatever pass wins the race decides whether DWM composes a title
+/// plaque. The geometry guard calls this every tick, so a late style is cleared
+/// (and forced to recompose) within a fraction of a second.
+#[cfg(windows)]
+pub fn enforce_module_chrome(app: &AppHandle) {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, GWL_STYLE, WS_CAPTION, WS_MAXIMIZEBOX, WS_MINIMIZEBOX, WS_SYSMENU,
+    };
+    let clear = (WS_CAPTION.0 | WS_SYSMENU.0 | WS_MINIMIZEBOX.0 | WS_MAXIMIZEBOX.0) as isize;
+    for (label, window) in app.webview_windows() {
+        // The settings panel is a real decorated window; wallpapers are
+        // reparented behind the desktop and never shown as app windows.
+        if label == "settings" || label.starts_with("wallpaper") {
+            continue;
+        }
+        let Some(hwnd) = hwnd_of(&window) else { continue };
+        let style = unsafe { GetWindowLongPtrW(hwnd, GWL_STYLE) };
+        if style & clear != 0 {
+            strip_caption(&window);
+        }
+    }
+}
 
 #[tauri::command]
 pub fn wallpaper_set_embedded(app: AppHandle, embed: bool) -> bool {

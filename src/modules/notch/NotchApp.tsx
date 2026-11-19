@@ -296,9 +296,13 @@ export function NotchApp() {
       const info = await invoke<MediaInfo>("get_media_info");
       setMedia(info);
       if (info && info.trackKey !== artKey.current) {
-        artKey.current = info.trackKey;
         const a = await invoke<{ dataUrl?: string; data_url?: string }>("get_media_art");
-        setArt(a?.dataUrl ?? a?.data_url ?? null);
+        const url = a?.dataUrl ?? a?.data_url ?? null;
+        setArt(url);
+        // Only remember the track once its artwork was actually read: players
+        // publish the thumbnail a moment after the title, and caching the key on
+        // an empty result left the card without artwork for the whole track.
+        if (url) artKey.current = info.trackKey;
       }
     };
     void tick();
@@ -900,7 +904,7 @@ export function NotchApp() {
               {tabKeys.map((key) => (
                 <div
                   key={key}
-                  className="notch-cell"
+                  className={`notch-cell${key === "media" ? " notch-cell-wide" : ""}`}
                   style={{ "--notch-scale": notch.moduleScale[key] } as CSSProperties}
                 >
                   {renderWidget(key)}
@@ -1221,7 +1225,13 @@ function MediaWidget({
     <div className="notch-section notch-media">
       <div className="notch-media-top">
         <div className="notch-media-artwrap">
-          {art ? <img key={art} className="notch-media-art" src={art} alt="" /> : <span className="notch-media-art" />}
+          {art ? (
+            <img key={art} className="notch-media-art" src={art} alt="" />
+          ) : (
+            <span className="notch-media-art notch-media-placeholder">
+              <NotchGlyph icon="media" size={26} />
+            </span>
+          )}
           <span className="notch-media-badge" aria-hidden="true">
             <NotchGlyph icon="media" size={13} />
           </span>
